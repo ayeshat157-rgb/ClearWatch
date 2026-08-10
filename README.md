@@ -21,39 +21,7 @@ ClearWatch is an advanced content safety and recommendation platform designed to
 
 ## 📦 Installation & Setup
 
-1. **Clone the repository** (if you haven't already):
+1. **Clone the repository**:
    ```bash
-   git clone <your-repo-url>
-   cd clearwatch
-   ```
-
-2. **Backend Setup**:
-   ```bash
-   cd server
-   npm install
-   # Create a .env file based on .env.example with your API keys (Groq, TMDb)
-   npm start
-   ```
-
-3. **Frontend Setup**:
-   ```bash
-   cd client-new
-   npm install
-   npm run dev
-   ```
-
-4. Open your browser and navigate to `http://localhost:5173` to see the app running!
-
-## ⚙️ Environment Variables
-
-You will need the following API keys to run the application fully:
-- `VITE_TMDB_API_KEY`: For fetching movie data and posters.
-- `GROQ_API_KEY`: For the AI recommendation engine and chat features.
-
-## 🤝 Contributing
-
-Contributions, issues, and feature requests are welcome! Feel free to check the issues page.
-
-## 📄 License
-
-This project is licensed under the MIT License.
+   git clone https://github.com/ayeshat157-rgb/ClearWatch.git
+   cd ClearWatch
