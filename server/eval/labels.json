@@ -1,0 +1,25 @@
+{
+  "_readme": "Ground-truth labels for the ClearWatch evaluation. Each case says whether a sensitivity category is actually PRESENT or ABSENT in a movie. Labels must be checked by a person who has seen the film or a trusted source — never filled in from an AI. Set verified: true only after a human has checked it; `npm run eval` ignores unverified cases unless you pass --include-unverified. The category must be an exact onboarding label (see TRIGGER_KEYWORD_MAP in index.js).",
+  "cases": [
+    { "tmdbId": 14306,  "title": "Marley & Me",                "category": "Animal cruelty or death",                    "expected": "present", "verified": false },
+    { "tmdbId": 6479,   "title": "I Am Legend",                "category": "Animal cruelty or death",                    "expected": "present", "verified": false },
+    { "tmdbId": 245891, "title": "John Wick",                  "category": "Animal cruelty or death",                    "expected": "present", "verified": false },
+    { "tmdbId": 862,    "title": "Toy Story",                  "category": "Animal cruelty or death",                    "expected": "absent",  "verified": false },
+    { "tmdbId": 8587,   "title": "The Lion King",              "category": "Death of a parent",                          "expected": "present", "verified": false },
+    { "tmdbId": 3170,   "title": "Bambi",                      "category": "Death of a parent",                          "expected": "present", "verified": false },
+    { "tmdbId": 109445, "title": "Frozen",                     "category": "Death of a parent",                          "expected": "present", "verified": false },
+    { "tmdbId": 862,    "title": "Toy Story",                  "category": "Death of a parent",                          "expected": "absent",  "verified": false },
+    { "tmdbId": 493922, "title": "Hereditary",                 "category": "Death of a child",                           "expected": "present", "verified": false },
+    { "tmdbId": 14160,  "title": "Up",                         "category": "Pregnancy loss (miscarriage, stillbirth)",   "expected": "present", "verified": false },
+    { "tmdbId": 222935, "title": "The Fault in Our Stars",     "category": "Terminal illness / cancer",                  "expected": "present", "verified": false },
+    { "tmdbId": 857,    "title": "Saving Private Ryan",        "category": "Graphic gore / dismemberment",               "expected": "present", "verified": false },
+    { "tmdbId": 150540, "title": "Inside Out",                 "category": "Graphic gore / dismemberment",               "expected": "absent",  "verified": false },
+    { "tmdbId": 641,    "title": "Requiem for a Dream",        "category": "Active drug use / needle depiction",         "expected": "present", "verified": false },
+    { "tmdbId": 627,    "title": "Trainspotting",              "category": "Active drug use / needle depiction",         "expected": "present", "verified": false },
+    { "tmdbId": 150540, "title": "Inside Out",                 "category": "Sexual content & nudity",                    "expected": "absent",  "verified": false },
+    { "tmdbId": 11135,  "title": "Arachnophobia",              "category": "Bugs / Insects (spiders, snakes, etc.)",     "expected": "present", "verified": false },
+    { "tmdbId": 26388,  "title": "Buried",                     "category": "Claustrophobia (being trapped, buried alive)", "expected": "present", "verified": false },
+    { "tmdbId": 808,    "title": "Shrek",                      "category": "Sexual assault references",                  "expected": "absent",  "verified": false },
+    { "tmdbId": 12,     "title": "Finding Nemo",               "category": "Death of a parent",                          "expected": "present", "verified": false }
+  ]
+}
