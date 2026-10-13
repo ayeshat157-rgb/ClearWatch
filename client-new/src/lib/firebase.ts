@@ -8,10 +8,14 @@ import {
   getAuth,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  signInWithPopup,
+  getAdditionalUserInfo,
+  GoogleAuthProvider,
   signOut as firebaseSignOut,
   deleteUser,
   type User,
 } from "firebase/auth";
+import { Capacitor } from "@capacitor/core";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -30,6 +34,18 @@ export async function signUp(email: string, password: string): Promise<User> {
 export async function logIn(email: string, password: string): Promise<User> {
   const cred = await signInWithEmailAndPassword(auth, email, password);
   return cred.user;
+}
+
+// Google sign-in (Firebase Auth, Google provider). Popups don't work inside
+// the Android app's WebView — that needs the native
+// @capacitor-firebase/authentication plugin — so it's web-only for now.
+export const googleSignInAvailable = !Capacitor.isNativePlatform();
+
+export async function signInWithGoogle(): Promise<{ user: User; isNewUser: boolean }> {
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: "select_account" });
+  const cred = await signInWithPopup(auth, provider);
+  return { user: cred.user, isNewUser: getAdditionalUserInfo(cred)?.isNewUser ?? false };
 }
 
 export async function logOut(): Promise<void> {
