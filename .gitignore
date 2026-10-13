@@ -26,3 +26,13 @@ build/
 Thumbs.db
 .vscode/
 .idea/
+
+# Capacitor generated native projects (rebuilt from source via `npx cap sync`)
+client-new/android/
+client-new/ios/
+
+# Large media (GitHub rejects files over 100 MB)
+final/*.mp4
+
+# Generated evaluation output (re-create with `npm run eval`)
+server/eval/results/
