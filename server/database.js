@@ -1,273 +1,226 @@
-const { getDb } = require('./db');
+// Data layer — Cloud Firestore (via firebase-admin).
+//
+// Layout:
+//   movieCache/{tmdbId}            { triggers, scrapedAt }        shared DDD cache
+//   movieMeta/{tmdbId}             { title, release_date, poster_path }
+//   users/{uid}                    { profile }
+//   users/{uid}/watchlist/{movieId}      { movie, addedAt }
+//   users/{uid}/ratings/{movieId}        { rating, profileHash, generatedAt }
+//   users/{uid}/ratingFeedback/{auto}    { movieId, movieTitle, aiRating, feedback, note, submittedAt }
+//   users/{uid}/triggerReports/{auto}    { movieId, movieTitle, note, reportedAt }
+//   users/{uid}/notifications/{auto}     { type, title, body, movieId, movieTitle, posterPath, read, createdAt }
+//   users/{uid}/consents/{auto}          { version, text, acceptedAt }
+//   users/{uid}/private/chat             { messages }
+//   users/{uid}/private/recommendations  { generatedAt, movies }
+//
+// Everything a user owns sits under users/{uid}, so deleting an account is
+// one recursive delete. Firestore encrypts data at rest.
+// FIRESTORE_PREFIX (optional) namespaces top-level collections, e.g. for a
+// smoke test that must not touch real data.
+
+const { getFirestore } = require('firebase-admin/firestore');
+require('./firebaseAdmin'); // initializes the Firebase app
+
+let dbInstance = null;
+function getDb() {
+  if (!dbInstance) {
+    dbInstance = getFirestore();
+    // TMDb objects contain undefined fields; Firestore rejects those by default.
+    dbInstance.settings({ ignoreUndefinedProperties: true });
+  }
+  return dbInstance;
+}
+// Tests swap in an in-memory implementation.
+function setDb(db) { dbInstance = db; }
+
+const prefix = () => process.env.FIRESTORE_PREFIX || '';
+const col = name => getDb().collection(prefix() + name);
+const userDoc = uid => col('users').doc(uid);
+const sub = (uid, name) => userDoc(uid).collection(name);
+const privateDoc = (uid, name) => sub(uid, 'private').doc(name);
+const now = () => new Date().toISOString();
+const ageMs = iso => Date.now() - new Date(iso).getTime();
 
 // ─── Trigger cache ───────────────────────────────────────────────────────
 const CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 90; // 90 days
 
 async function getCachedTriggers(tmdbId) {
-  const db = await getDb();
-  const row = await db.get('SELECT * FROM movie_cache WHERE tmdb_id = ?', tmdbId);
-  if (!row) return null;
-  const ageMs = Date.now() - new Date(row.scraped_at).getTime();
-  if (ageMs > CACHE_MAX_AGE_MS) return null;
-  return JSON.parse(row.triggers);
+  const snap = await col('movieCache').doc(String(tmdbId)).get();
+  if (!snap.exists) return null;
+  const { triggers, scrapedAt } = snap.data();
+  if (ageMs(scrapedAt) > CACHE_MAX_AGE_MS) return null;
+  return triggers;
 }
 
 async function saveCachedTriggers(tmdbId, triggers) {
-  const db = await getDb();
-  await db.run(
-    'INSERT OR REPLACE INTO movie_cache (tmdb_id, triggers, scraped_at) VALUES (?, ?, ?)',
-    tmdbId,
-    JSON.stringify(triggers),
-    new Date().toISOString()
-  );
+  await col('movieCache').doc(String(tmdbId)).set({ triggers, scrapedAt: now() });
 }
 
 // ─── User profile ────────────────────────────────────────────────────────
 async function getProfile(uid) {
-  const db = await getDb();
-  const row = await db.get('SELECT profile FROM user_profiles WHERE uid = ?', uid);
-  return row ? JSON.parse(row.profile) : null;
+  const snap = await userDoc(uid).get();
+  return snap.exists ? snap.data().profile ?? null : null;
 }
 
 async function saveProfile(uid, profile) {
-  const db = await getDb();
-  await db.run(
-    'INSERT OR REPLACE INTO user_profiles (uid, profile) VALUES (?, ?)',
-    uid,
-    JSON.stringify(profile)
-  );
+  await userDoc(uid).set({ profile }, { merge: true });
 }
 
 // ─── Watchlist ───────────────────────────────────────────────────────────
 async function getWatchlist(uid) {
-  const db = await getDb();
-  const rows = await db.all('SELECT movie FROM watchlists WHERE uid = ?', uid);
-  return rows.map(r => JSON.parse(r.movie));
+  const snap = await sub(uid, 'watchlist').orderBy('addedAt').get();
+  return snap.docs.map(d => d.data().movie);
 }
 
 async function addToWatchlist(uid, movie) {
-  const db = await getDb();
-  await db.run(
-    'INSERT OR REPLACE INTO watchlists (uid, movie_id, movie) VALUES (?, ?, ?)',
-    uid,
-    movie.id.toString(),
-    JSON.stringify(movie)
-  );
+  await sub(uid, 'watchlist').doc(String(movie.id)).set({ movie, addedAt: now() });
 }
 
 async function removeFromWatchlist(uid, movieId) {
-  const db = await getDb();
-  await db.run('DELETE FROM watchlists WHERE uid = ? AND movie_id = ?', uid, movieId.toString());
+  await sub(uid, 'watchlist').doc(String(movieId)).delete();
 }
 
 // ─── Recommendations ─────────────────────────────────────────────────────
 async function getRecommendations(uid) {
-  const db = await getDb();
-  const row = await db.get('SELECT generated_at, movies FROM recommendations WHERE uid = ?', uid);
-  if (!row) return null;
-  return { generatedAt: row.generated_at, movies: JSON.parse(row.movies) };
+  const snap = await privateDoc(uid, 'recommendations').get();
+  return snap.exists ? snap.data() : null;
 }
 
 async function saveRecommendations(uid, movies) {
-  const db = await getDb();
-  await db.run(
-    'INSERT OR REPLACE INTO recommendations (uid, generated_at, movies) VALUES (?, ?, ?)',
-    uid,
-    new Date().toISOString(),
-    JSON.stringify(movies)
-  );
+  await privateDoc(uid, 'recommendations').set({ generatedAt: now(), movies });
 }
 
 // ─── Movie summaries + collections ───────────────────────────────────────
 async function cacheMovieSummary(tmdbId, movie) {
-  const db = await getDb();
-  await db.run(
-    'INSERT OR REPLACE INTO movie_meta (tmdb_id, title, release_date, poster_path) VALUES (?, ?, ?, ?)',
-    tmdbId,
-    movie.title,
-    movie.release_date,
-    movie.poster_path
-  );
+  await col('movieMeta').doc(String(tmdbId)).set({
+    title: movie.title, release_date: movie.release_date, poster_path: movie.poster_path,
+  });
 }
 
+// Movies that have both cached triggers and metadata. Reads both collections
+// in full, so callers should cache the result (see /api/collections).
 async function getAllCachedEntries() {
-  const db = await getDb();
-  // Join cache and meta so we only return movies that have both triggers and metadata
-  const rows = await db.all(`
-    SELECT c.triggers, m.tmdb_id, m.title, m.release_date, m.poster_path
-    FROM movie_cache c
-    JOIN movie_meta m ON c.tmdb_id = m.tmdb_id
-  `);
-  
-  return rows.map(r => ({
-    movie: {
-      id: r.tmdb_id,
-      title: r.title,
-      release_date: r.release_date,
-      poster_path: r.poster_path
-    },
-    triggers: JSON.parse(r.triggers)
-  }));
+  const [cache, meta] = await Promise.all([col('movieCache').get(), col('movieMeta').get()]);
+  const metaById = new Map(meta.docs.map(d => [d.id, d.data()]));
+  return cache.docs
+    .filter(d => metaById.has(d.id))
+    .map(d => ({ movie: { id: d.id, ...metaById.get(d.id) }, triggers: d.data().triggers || [] }));
 }
 
 // ─── Personalized rating cache ───────────────────────────────────────────
 const RATING_CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 30; // 30 days
 
 async function getCachedRating(uid, movieId, profileHash) {
-  const db = await getDb();
-  const row = await db.get(
-    'SELECT rating, profile_hash, generated_at FROM ratings_cache WHERE uid = ? AND movie_id = ?',
-    uid, movieId.toString()
-  );
-  if (!row || row.profile_hash !== profileHash) return null;
-  
-  const ageMs = Date.now() - new Date(row.generated_at).getTime();
-  if (ageMs > RATING_CACHE_MAX_AGE_MS) return null;
-  
-  return JSON.parse(row.rating);
+  const snap = await sub(uid, 'ratings').doc(String(movieId)).get();
+  if (!snap.exists) return null;
+  const row = snap.data();
+  if (row.profileHash !== profileHash || ageMs(row.generatedAt) > RATING_CACHE_MAX_AGE_MS) return null;
+  return row.rating;
 }
 
 async function saveCachedRating(uid, movieId, profileHash, rating) {
-  const db = await getDb();
-  await db.run(
-    'INSERT OR REPLACE INTO ratings_cache (uid, movie_id, profile_hash, rating, generated_at) VALUES (?, ?, ?, ?, ?)',
-    uid,
-    movieId.toString(),
-    profileHash,
-    JSON.stringify(rating),
-    new Date().toISOString()
-  );
+  await sub(uid, 'ratings').doc(String(movieId)).set({ rating, profileHash, generatedAt: now() });
 }
 
 // ─── Missing trigger reports ─────────────────────────────────────────────
 async function addTriggerReport(uid, report) {
-  const db = await getDb();
-  await db.run(
-    'INSERT INTO trigger_reports (uid, movie_id, movie_title, note, reported_at) VALUES (?, ?, ?, ?, ?)',
-    uid,
-    report.movieId.toString(),
-    report.movieTitle,
-    report.note,
-    new Date().toISOString()
-  );
+  await sub(uid, 'triggerReports').add({
+    movieId: String(report.movieId), movieTitle: report.movieTitle ?? null, note: report.note, reportedAt: now(),
+  });
 }
 
 // ─── Account deletion ────────────────────────────────────────────────────
 async function deleteUserData(uid) {
-  const db = await getDb();
-  await db.run('DELETE FROM user_profiles WHERE uid = ?', uid);
-  await db.run('DELETE FROM watchlists WHERE uid = ?', uid);
-  await db.run('DELETE FROM recommendations WHERE uid = ?', uid);
-  await db.run('DELETE FROM ratings_cache WHERE uid = ?', uid);
-  await db.run('DELETE FROM chat_history WHERE uid = ?', uid);
-  await db.run('DELETE FROM trigger_reports WHERE uid = ?', uid);
-  await db.run('DELETE FROM rating_feedback WHERE uid = ?', uid);
+  await getDb().recursiveDelete(userDoc(uid));
 }
 
 // ─── Rating feedback (👍/👎) ─────────────────────────────────────────────
 async function addRatingFeedback(uid, entry) {
-  const db = await getDb();
-  await db.run(
-    'INSERT INTO rating_feedback (uid, movie_id, movie_title, ai_rating, feedback, note, submitted_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    uid,
-    entry.movieId.toString(),
-    entry.movieTitle,
-    entry.aiRating,
-    entry.feedback,
-    entry.note || '',
-    new Date().toISOString()
-  );
+  await sub(uid, 'ratingFeedback').add({
+    movieId: String(entry.movieId),
+    movieTitle: entry.movieTitle ?? null,
+    aiRating: entry.aiRating ?? null,
+    feedback: entry.feedback,
+    note: entry.note || '',
+    submittedAt: now(),
+  });
 }
 
 async function getUserRatingFeedback(uid, limit = 10) {
-  const db = await getDb();
-  const rows = await db.all(
-    'SELECT * FROM rating_feedback WHERE uid = ? ORDER BY submitted_at DESC LIMIT ?',
-    uid, limit
-  );
-  return rows.map(r => ({
-    uid: r.uid,
-    movieId: r.movie_id,
-    movieTitle: r.movie_title,
-    aiRating: r.ai_rating,
-    feedback: r.feedback,
-    note: r.note,
-    submittedAt: r.submitted_at
-  }));
+  const snap = await sub(uid, 'ratingFeedback').orderBy('submittedAt', 'desc').limit(limit).get();
+  return snap.docs.map(d => ({ uid, ...d.data() }));
 }
 
 // ─── Chat History ────────────────────────────────────────────────────────
 async function getChatHistory(uid) {
-  const db = await getDb();
-  const row = await db.get('SELECT messages FROM chat_history WHERE uid = ?', uid);
-  return row ? JSON.parse(row.messages) : [];
+  const snap = await privateDoc(uid, 'chat').get();
+  return snap.exists ? snap.data().messages || [] : [];
 }
 
 async function saveChatHistory(uid, messages) {
-  const db = await getDb();
-  const limitedMessages = Array.isArray(messages) ? messages.slice(-50) : [];
-  await db.run(
-    'INSERT OR REPLACE INTO chat_history (uid, messages) VALUES (?, ?)',
-    uid,
-    JSON.stringify(limitedMessages)
-  );
+  const limited = Array.isArray(messages) ? messages.slice(-50) : [];
+  await privateDoc(uid, 'chat').set({ messages: limited });
 }
 
 async function clearChatHistory(uid) {
-  const db = await getDb();
-  await db.run('DELETE FROM chat_history WHERE uid = ?', uid);
+  await privateDoc(uid, 'chat').delete();
 }
 
-// ─── Notifications ───────────────────────────────────────────────────────────
+// ─── Notifications ───────────────────────────────────────────────────────
 async function getNotifications(uid) {
-  const db = await getDb();
-  const rows = await db.all(
-    'SELECT * FROM notifications WHERE uid = ? ORDER BY created_at DESC LIMIT 50',
-    uid
-  );
-  return rows.map(r => ({
-    id: r.id,
-    type: r.type,
-    title: r.title,
-    body: r.body,
-    movieId: r.movie_id,
-    movieTitle: r.movie_title,
-    posterPath: r.poster_path,
-    read: r.read === 1,
-    createdAt: r.created_at,
-  }));
+  const snap = await sub(uid, 'notifications').orderBy('createdAt', 'desc').limit(50).get();
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
 async function addNotification(uid, { type, title, body, movieId = null, movieTitle = null, posterPath = null }) {
-  const db = await getDb();
-  await db.run(
-    'INSERT INTO notifications (uid, type, title, body, movie_id, movie_title, poster_path, read, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)',
-    uid, type, title, body, movieId, movieTitle, posterPath, new Date().toISOString()
-  );
+  await sub(uid, 'notifications').add({
+    type, title, body, movieId, movieTitle, posterPath, read: false, createdAt: now(),
+  });
 }
 
+// ids: specific notification IDs, or null/empty to mark all read. IDs are
+// looked up under this user's own path, so nobody can touch another user's.
 async function markNotificationsRead(uid, ids = null) {
-  const db = await getDb();
-  if (ids && ids.length > 0) {
-    // mark specific IDs as read
-    const placeholders = ids.map(() => '?').join(',');
-    await db.run(
-      `UPDATE notifications SET read = 1 WHERE uid = ? AND id IN (${placeholders})`,
-      uid, ...ids
-    );
+  const batch = getDb().batch();
+  if (Array.isArray(ids) && ids.length > 0) {
+    const snaps = await Promise.all(ids.slice(0, 100).map(id => sub(uid, 'notifications').doc(String(id)).get()));
+    snaps.filter(s => s.exists).forEach(s => batch.update(s.ref, { read: true }));
   } else {
-    // mark all as read
-    await db.run('UPDATE notifications SET read = 1 WHERE uid = ?', uid);
+    const unread = await sub(uid, 'notifications').where('read', '==', false).get();
+    unread.docs.forEach(d => batch.update(d.ref, { read: true }));
   }
+  await batch.commit();
 }
 
 async function getUnreadNotificationCount(uid) {
-  const db = await getDb();
-  const row = await db.get('SELECT COUNT(*) as cnt FROM notifications WHERE uid = ? AND read = 0', uid);
-  return row?.cnt ?? 0;
+  const agg = await sub(uid, 'notifications').where('read', '==', false).count().get();
+  return agg.data().count;
+}
+
+// ─── Consent + data export ───────────────────────────────────────────────
+async function recordConsent(uid, version, text) {
+  await sub(uid, 'consents').add({ version, text, acceptedAt: now() });
+}
+
+// Everything we hold about one user, in a portable form.
+async function exportUserData(uid) {
+  const all = async name => (await sub(uid, name).get()).docs.map(d => d.data());
+  return {
+    exportedAt: now(),
+    uid,
+    profile: await getProfile(uid),
+    watchlist: await getWatchlist(uid),
+    chatHistory: await getChatHistory(uid),
+    ratingFeedback: await all('ratingFeedback'),
+    triggerReports: await all('triggerReports'),
+    notifications: await getNotifications(uid),
+    savedRatings: (await sub(uid, 'ratings').get()).docs.map(d => ({ movieId: d.id, ...d.data() })),
+    consents: await all('consents'),
+  };
 }
 
 module.exports = {
+  getDb, setDb,
   getCachedTriggers, saveCachedTriggers,
   getProfile, saveProfile,
   getWatchlist, addToWatchlist, removeFromWatchlist,
@@ -278,4 +231,5 @@ module.exports = {
   addRatingFeedback, getUserRatingFeedback,
   getChatHistory, saveChatHistory, clearChatHistory,
   getNotifications, addNotification, markNotificationsRead, getUnreadNotificationCount,
+  recordConsent, exportUserData,
 };

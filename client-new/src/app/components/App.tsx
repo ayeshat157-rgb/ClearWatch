@@ -14,6 +14,10 @@ import {
   reportMissingTrigger as apiReportMissingTrigger,
   deleteAccountData,
   sendChatMessage,
+  ApiError,
+  getConsentText,
+  recordConsent,
+  downloadMyData,
   submitRatingFeedback,
   loadChatHistory,
   clearChatHistory,
@@ -23,25 +27,28 @@ import {
   type TmdbSearchResult,
   type CollectionMovie,
 } from "../../lib/api";
-import { signUp, logIn, logOut, deleteFirebaseAccount } from "../../lib/firebase";
+import { signUp, logIn, logOut, deleteFirebaseAccount, signInWithGoogle, googleSignInAvailable } from "../../lib/firebase";
 import {
   Home, Search, Bookmark, MessageCircle, User, Bell, Shield,
   ChevronRight, ChevronDown, ChevronUp, X, ArrowLeft,
   ThumbsUp, ThumbsDown, Share2, Send, Check, Moon, Sun,
   SlidersHorizontal, Flag, RotateCcw, Baby, Sparkles,
   TrendingUp, Play, Eye, EyeOff, Settings, LogOut, Menu,
-  Film, Tv, Plus, Star, Zap, Heart, Clock, Trash2
+  Film, Tv, Plus, Star, Zap, Heart, Clock, Trash2, Download
 } from "lucide-react";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 type AppView = "landing" | "onboarding" | "app";
 type Tab = "home" | "search" | "chat" | "watchlist" | "profile";
-type Rating = "safe" | "caution" | "avoid";
-interface Trigger { id: string; label: string; emoji: string; level: Rating; note: string; }
+type Rating = "safe" | "caution" | "avoid" | "unknown";
+// label = category (spoiler-safe); note = specifics, shown only after a deliberate tap
+interface Trigger { id: string; label: string; emoji: string; level: Rating; note: string; badge?: string; }
 interface Movie {
   id: string; title: string; year: number; genre: string; runtime: string;
   mediaType: "movie" | "tv"; gradient: string; rating: Rating;
-  matchPct: number; aiNote: string; triggers: Trigger[]; posterUrl?: string | null;
+  matchPct: number | null; aiNote: string; triggers: Trigger[]; posterUrl?: string | null;
+  unverified?: string[]; // user's categories the community data couldn't rule out
+  details?: string; // AI prose with specifics — behind "Show specifics"
 }
 interface ChatMsg {
   id: string; role: "user" | "ai"; text: string;
@@ -53,6 +60,8 @@ const RC = {
   safe: { label: "Safe for You", icon: "✓", bg: "#16A34A", soft: "#DCFCE7", softText: "#14532D", glow: "rgba(22,163,74,0.25)" },
   caution: { label: "Use Caution", icon: "!", bg: "#D97706", soft: "#FEF3C7", softText: "#78350F", glow: "rgba(217,119,6,0.25)" },
   avoid: { label: "Not Recommended", icon: "✕", bg: "#DC2626", soft: "#FEE2E2", softText: "#7F1D1D", glow: "rgba(220,38,38,0.25)" },
+  // Not a softer "safe" — we simply don't know. Never shown as green.
+  unknown: { label: "Insufficient Data", icon: "?", bg: "#64748B", soft: "#F1F5F9", softText: "#334155", glow: "rgba(100,116,139,0.25)" },
 } as const;
 
 // ─── Data ────────────────────────────────────────────────────────────────────
@@ -60,6 +69,7 @@ const MOVIES: Movie[] = [
   {
     id: "inside-out-2", title: "Inside Out 2", year: 2024, genre: "Animation", runtime: "1h 40m", mediaType: "movie",
     gradient: "linear-gradient(135deg,#FDE68A 0%,#FB923C 50%,#EC4899 100%)",
+    posterUrl: "https://image.tmdb.org/t/p/w500/vpnVM9B6NMmQpWeZvzLvDESb2QY.jpg",
     rating: "safe", matchPct: 96,
     aiNote: "A near-perfect match. Anxiety is a main character here — shown with warmth, humor, and real empathy. No violence, sexual content, or substance use. Riley's journey through big emotions is gentle and affirming.",
     triggers: [
@@ -70,6 +80,7 @@ const MOVIES: Movie[] = [
   {
     id: "barbie", title: "Barbie", year: 2023, genre: "Comedy", runtime: "1h 54m", mediaType: "movie",
     gradient: "linear-gradient(135deg,#FBCFE8 0%,#EC4899 55%,#9D174D 100%)",
+    posterUrl: "https://image.tmdb.org/t/p/w500/iuFNMS8U5cb6xfzi51Dbkovj7vM.jpg",
     rating: "safe", matchPct: 88,
     aiNote: "Playful, feminist, and sharply funny. Light existential themes about identity and mortality are handled with humor and warmth. Minimal mature content — a great pick for most of your triggers.",
     triggers: [
@@ -81,6 +92,7 @@ const MOVIES: Movie[] = [
   {
     id: "coco", title: "Coco", year: 2017, genre: "Animated Family", runtime: "1h 45m", mediaType: "movie",
     gradient: "linear-gradient(135deg,#F97316 0%,#EF4444 45%,#7C3AED 100%)",
+    posterUrl: "https://image.tmdb.org/t/p/w500/6Ryitt95xrO8KXuqRGm1fUuNwqF.jpg",
     rating: "safe", matchPct: 91,
     aiNote: "Warm, culturally vibrant, and deeply loving. Death is a theme, but treated with extraordinary care and beauty. One note: the Día de los Muertos tradition is spiritually central — not frightening, but present throughout.",
     triggers: [
@@ -91,6 +103,7 @@ const MOVIES: Movie[] = [
   {
     id: "inception", title: "Inception", year: 2010, genre: "Sci-Fi Thriller", runtime: "2h 28m", mediaType: "movie",
     gradient: "linear-gradient(135deg,#1E3A5F 0%,#0A1628 55%,#1E3A5F 100%)",
+    posterUrl: "https://image.tmdb.org/t/p/w500/xlaY2zyzMfkhk0HSC5VUwzoZPU1.jpg",
     rating: "caution", matchPct: 73,
     aiNote: "A brilliant mind-bending thriller with moderate concerns. The layered dream sequences may intensify anxiety. Violence is present but purposeful — no gore. Substance use (sedatives) is thematically important.",
     triggers: [
@@ -102,6 +115,7 @@ const MOVIES: Movie[] = [
   {
     id: "oppenheimer", title: "Oppenheimer", year: 2023, genre: "Historical Drama", runtime: "3h 1m", mediaType: "movie",
     gradient: "linear-gradient(135deg,#475569 0%,#1E293B 100%)",
+    posterUrl: "https://image.tmdb.org/t/p/w500/8Gxv8gSFCU0XGDykEGv7zR1n2ua.jpg",
     rating: "caution", matchPct: 62,
     aiNote: "A towering cinematic achievement, but not without challenges. The existential weight of mass destruction may be anxiety-inducing. Two brief sexual scenes appear, and strong language is occasional throughout.",
     triggers: [
@@ -114,6 +128,7 @@ const MOVIES: Movie[] = [
   {
     id: "dune-2", title: "Dune: Part Two", year: 2024, genre: "Sci-Fi Epic", runtime: "2h 46m", mediaType: "movie",
     gradient: "linear-gradient(135deg,#D97706 0%,#92400E 55%,#1C1917 100%)",
+    posterUrl: "https://image.tmdb.org/t/p/w500/6izwz7rsy95ARzTR3poZ8H6c5pp.jpg",
     rating: "caution", matchPct: 71,
     aiNote: "A breathtaking visual epic with moderate content. Battle violence is significant but not gratuitous. Messianic and religious themes run deep. Minimal jumpscares — more sustained drama than shock.",
     triggers: [
@@ -125,6 +140,7 @@ const MOVIES: Movie[] = [
   {
     id: "the-bear", title: "The Bear", year: 2022, genre: "Drama", runtime: "30 min / ep", mediaType: "tv",
     gradient: "linear-gradient(135deg,#9A3412 0%,#292524 100%)",
+    posterUrl: "https://image.tmdb.org/t/p/w500/eyKa9kOdCtEcLLGkiUOnVbhf9li.jpg",
     rating: "caution", matchPct: 55,
     aiNote: "Critically acclaimed and intensely crafted — but deliberately overwhelming. The pacing is designed to stress you out. Based on your anxiety sensitivity, proceed with significant caution. Episode 6 (\"Review\") is an unrelenting 22-minute single take.",
     triggers: [
@@ -137,6 +153,7 @@ const MOVIES: Movie[] = [
   {
     id: "hereditary", title: "Hereditary", year: 2018, genre: "Horror", runtime: "2h 7m", mediaType: "movie",
     gradient: "linear-gradient(135deg,#1C1917 0%,#292524 40%,#44403C 100%)",
+    posterUrl: "https://image.tmdb.org/t/p/w500/4GFPuL14eXi66V96xBWY73Y9PfR.jpg",
     rating: "avoid", matchPct: 12,
     aiNote: "Not recommended for your profile. One of the most psychologically disturbing horror films in recent memory. Contains graphic violence, deeply traumatic grief sequences, and imagery that many viewers find impossible to shake.",
     triggers: [
@@ -150,6 +167,7 @@ const MOVIES: Movie[] = [
   {
     id: "saltburn", title: "Saltburn", year: 2023, genre: "Psychological Thriller", runtime: "2h 7m", mediaType: "movie",
     gradient: "linear-gradient(135deg,#57534E 0%,#0C0A09 100%)",
+    posterUrl: "https://image.tmdb.org/t/p/w500/zGTfMwG112BC66mpaveVxoWPOaB.jpg",
     rating: "avoid", matchPct: 18,
     aiNote: "Not recommended for your profile. Contains graphic sexual content, psychological manipulation as its central device, and several deeply unsettling sequences. Proceed only with clear-eyed preparation.",
     triggers: [
@@ -162,6 +180,7 @@ const MOVIES: Movie[] = [
   {
     id: "everything", title: "Everything Everywhere", year: 2022, genre: "Sci-Fi Comedy", runtime: "2h 19m", mediaType: "movie",
     gradient: "linear-gradient(135deg,#7C3AED 0%,#1D4ED8 50%,#059669 100%)",
+    posterUrl: "https://image.tmdb.org/t/p/w500/u68AjlvlutfEIcpmbYpKcdi09ut.jpg",
     rating: "caution", matchPct: 68,
     aiNote: "A wildly inventive, deeply emotional film about family, meaning, and nihilism. Some sequences are intentionally absurd and disorienting. The themes of meaninglessness may be difficult during low periods.",
     triggers: [
@@ -175,8 +194,8 @@ const MOVIES: Movie[] = [
 const COLLECTIONS = [
   { id: "no-animal", label: "No Animal Death", emoji: "🐾", from: "#059669", to: "#0D9488", count: 47 },
   { id: "family", label: "Family Friendly", emoji: "👨‍👩‍👧", from: "#2563EB", to: "#7C3AED", count: 83 },
-  { id: "anxiety", label: "Safe for Anxiety", emoji: "🧘", from: "#7C3AED", to: "#EC4899", count: 61 },
-  { id: "muslim", label: "Muslim-Friendly", emoji: "🌙", from: "#065F46", to: "#0D9488", count: 39 },
+  { id: "anxiety", label: "No Jump Scares or Panic Attacks", emoji: "🧘", from: "#7C3AED", to: "#EC4899", count: 61 },
+  { id: "muslim", label: "No Alcohol, Drugs or Nudity", emoji: "🌙", from: "#065F46", to: "#0D9488", count: 39 },
   { id: "gore-free", label: "No Gore", emoji: "✨", from: "#92400E", to: "#D97706", count: 54 },
 ];
 
@@ -197,6 +216,10 @@ const TRIGGER_CATS = [
     id: "phobias", label: "Common Phobias & Panic Triggers", emoji: "😰",
     items: ["Bugs / Insects (spiders, snakes, etc.)", "Claustrophobia (being trapped, buried alive)", "Vomiting / Emetophobia", "Medical settings (hospitals, needles, surgeries)"]
   },
+  {
+    id: "loss", label: "Loss & Grief", emoji: "🕯️",
+    items: ["Death of a parent", "Death of a child", "Pregnancy loss (miscarriage, stillbirth)", "Terminal illness / cancer"]
+  },
 ];
 
 const INITIAL_CHAT: ChatMsg[] = [
@@ -213,7 +236,7 @@ const SUGGESTED_PROMPTS = [
 
 // ─── Reusable components ─────────────────────────────────────────────────────
 
-function SafeBadge({ rating, size = "sm" }: { rating: Rating; size?: "sm" | "md" | "lg" | "xl" }) {
+function SafeBadge({ rating, size = "sm", label }: { rating: Rating; size?: "sm" | "md" | "lg" | "xl"; label?: string }) {
   const r = RC[rating];
   const sz = {
     sm: "text-[10px] px-2 py-0.5 gap-0.5 font-bold",
@@ -224,14 +247,14 @@ function SafeBadge({ rating, size = "sm" }: { rating: Rating; size?: "sm" | "md"
   return (
     <span className={`inline-flex items-center rounded-full text-white ${sz}`} style={{ backgroundColor: r.bg }}>
       <span className="leading-none">{r.icon}</span>
-      <span>{r.label}</span>
+      <span>{label ?? r.label}</span>
     </span>
   );
 }
 
-function MatchRing({ pct, rating, size = 64 }: { pct: number; rating: Rating; size?: number }) {
+function MatchRing({ pct, rating, size = 64 }: { pct: number | null; rating: Rating; size?: number }) {
   const color = RC[rating].bg;
-  const R = size / 2 - 5, circ = 2 * Math.PI * R, dash = (pct / 100) * circ;
+  const R = size / 2 - 5, circ = 2 * Math.PI * R, dash = ((pct ?? 0) / 100) * circ;
   return (
     <div className="relative flex items-center justify-center flex-shrink-0" style={{ width: size, height: size }}>
       <svg className="absolute inset-0" width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
@@ -240,8 +263,8 @@ function MatchRing({ pct, rating, size = 64 }: { pct: number; rating: Rating; si
           strokeDasharray={`${dash} ${circ}`} strokeLinecap="round" transform={`rotate(-90 ${size / 2} ${size / 2})`} />
       </svg>
       <div className="text-center">
-        <div className="font-bold text-foreground leading-none" style={{ fontSize: size * 0.22 }}>{pct}%</div>
-        <div className="text-muted-foreground leading-none mt-0.5" style={{ fontSize: size * 0.13 }}>match</div>
+        <div className="font-bold text-foreground leading-none" style={{ fontSize: size * 0.22 }}>{pct === null ? "—" : `${pct}%`}</div>
+        <div className="text-muted-foreground leading-none mt-0.5" style={{ fontSize: size * 0.13 }}>{pct === null ? "no data" : "match"}</div>
       </div>
     </div>
   );
@@ -296,27 +319,30 @@ function LandingPage({ onGetStarted, onLogin }: { onGetStarted: () => void; onLo
     {
       id: "inside-out-2", title: "Inside Out 2", year: 2024, genre: "Animation", runtime: "1h 40m",
       rating: "safe" as Rating, matchPct: 96,
-      posterUrl: "https://image.tmdb.org/t/p/w500/vpnVM9B6NMmQpEZaD0hKWtENuD6.jpg",
+      gradient: "linear-gradient(135deg,#FDE68A 0%,#FB923C 50%,#EC4899 100%)",
+      posterUrl: "https://image.tmdb.org/t/p/w500/vpnVM9B6NMmQpWeZvzLvDESb2QY.jpg",
       aiNote: "Near-perfect match for your profile. Anxiety is explored with warmth and empathy. Zero graphic violence, sexual content, or substance abuse.",
       triggers: [{ id: "t1", label: "Anxiety Themes", emoji: "😰", level: "safe" as Rating, note: "Handled warmly" }, { id: "t2", label: "Family Safe", emoji: "✨", level: "safe" as Rating, note: "G-rated throughout" }]
     },
     {
       id: "barbie", title: "Barbie", year: 2023, genre: "Comedy", runtime: "1h 54m",
       rating: "safe" as Rating, matchPct: 88,
-      posterUrl: "https://image.tmdb.org/t/p/w500/iuJuN2fvKhac3DhBPbdfeTMoFgZ.jpg",
+      gradient: "linear-gradient(135deg,#FBCFE8 0%,#EC4899 55%,#9D174D 100%)",
+      posterUrl: "https://image.tmdb.org/t/p/w500/iuFNMS8U5cb6xfzi51Dbkovj7vM.jpg",
       aiNote: "Playful and modest comedy. Light existential themes about identity handled with humor. Minimal mature content — highly compatible with your settings.",
       triggers: [{ id: "t3", label: "Mild Innuendo", emoji: "💬", level: "safe" as Rating, note: "Playful humor" }, { id: "t4", label: "Existential Humor", emoji: "🤔", level: "safe" as Rating, note: "Lighthearted" }]
     },
     {
       id: "inception", title: "Inception", year: 2010, genre: "Sci-Fi Thriller", runtime: "2h 28m",
       rating: "caution" as Rating, matchPct: 73,
-      posterUrl: "https://image.tmdb.org/t/p/w500/ljsZTbVsrQSqovxOD2rT2tZ8t2.jpg",
+      gradient: "linear-gradient(135deg,#1E3A5F 0%,#0A1628 55%,#1E3A5F 100%)",
+      posterUrl: "https://image.tmdb.org/t/p/w500/xlaY2zyzMfkhk0HSC5VUwzoZPU1.jpg",
       aiNote: "Mind-bending thriller. Action violence is present (gunfights/sedative drug references), but no graphic gore or gratuitous horror.",
       triggers: [{ id: "t5", label: "Action Violence", emoji: "⚔️", level: "caution" as Rating, note: "Gunfights throughout" }, { id: "t6", label: "Sedative Depiction", emoji: "💊", level: "caution" as Rating, note: "Plot point" }]
     }
   ];
 
-  const [activeHeroMovie, setActiveHeroMovie] = useState(HERO_MOVIES[0]);
+  const [activeHeroMovie, setActiveHeroMovie] = useState<Omit<(typeof HERO_MOVIES)[number], "matchPct"> & { matchPct: number | null }>(HERO_MOVIES[0]);
   const [authMode, setAuthMode] = useState<"login" | "signup" | null>(null);
   const [infoModal, setInfoModal] = useState<string | null>(null);
 
@@ -400,7 +426,7 @@ function LandingPage({ onGetStarted, onLogin }: { onGetStarted: () => void; onLo
             </h1>
 
             <p className="text-slate-300 text-lg sm:text-xl leading-relaxed mb-8 max-w-xl font-normal">
-              ClearWatch screens every movie & TV show against your personal trauma history, sensory sensitivities, phobias, and values — so you never get blindsided again.
+              ClearWatch checks movies against your personal trauma history, sensory sensitivities, and phobias using community-reported content data — and tells you plainly when there isn't enough data to call something safe.
             </p>
 
             <div className="flex flex-wrap items-center gap-4 mb-10">
@@ -415,7 +441,7 @@ function LandingPage({ onGetStarted, onLogin }: { onGetStarted: () => void; onLo
             <div className="grid grid-cols-3 gap-4 pt-6 border-t border-white/8 text-slate-400 text-xs sm:text-sm">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-lg bg-teal-500/10 flex items-center justify-center text-teal-400">🔒</div>
-                <span>100% Encrypted & Private</span>
+                <span>Delete your data anytime</span>
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-lg bg-teal-500/10 flex items-center justify-center text-teal-400">⚡</div>
@@ -495,6 +521,68 @@ function LandingPage({ onGetStarted, onLogin }: { onGetStarted: () => void; onLo
         </div>
       </section>
 
+      {/* Featured Screened Movies Showcase */}
+      <section className="relative max-w-7xl mx-auto px-6 lg:px-16 py-12">
+        <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-4">
+          <div>
+            <div className="inline-flex items-center gap-2 text-teal-400 text-xs font-bold uppercase tracking-widest mb-2">
+              <Film size={14} /> Screened Library Highlights
+            </div>
+            <h2 className="text-3xl sm:text-4xl text-white font-serif font-medium">Example Safety Profiles</h2>
+          </div>
+          <p className="text-slate-400 text-sm max-w-md">
+            Illustrative examples for a sample profile. Your own ratings depend on your profile and on community-reported data.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+          {MOVIES.slice(0, 6).map(m => (
+            <div
+              key={m.id}
+              onClick={() => {
+                setActiveHeroMovie({
+                  id: m.id,
+                  title: m.title,
+                  year: m.year,
+                  genre: m.genre,
+                  runtime: m.runtime,
+                  rating: m.rating,
+                  matchPct: m.matchPct,
+                  gradient: m.gradient,
+                  posterUrl: m.posterUrl || "",
+                  aiNote: m.aiNote,
+                  triggers: m.triggers.map((t, idx) => ({ id: `t-${idx}`, label: t.label, emoji: t.emoji, level: t.level, note: t.note }))
+                });
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+              className="group relative rounded-2xl overflow-hidden cursor-pointer border border-white/10 hover:border-teal-400/60 hover:scale-[1.04] transition-all duration-300 shadow-xl bg-[#0F1A2E]/80"
+            >
+              <div className="aspect-[2/3] relative overflow-hidden bg-slate-800">
+                {m.posterUrl && (
+                  <img
+                    src={m.posterUrl}
+                    alt={m.title}
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                  />
+                )}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/25 to-transparent" />
+                <div className="absolute top-2.5 left-2.5">
+                  <SafeBadge rating={m.rating} size="sm" />
+                </div>
+                <div className="absolute bottom-0 left-0 right-0 p-3">
+                  <p className="text-white font-bold text-xs truncate leading-tight">{m.title}</p>
+                  <p className="text-slate-400 text-[10px] mt-0.5">{m.year} · {m.genre}</p>
+                  <div className="mt-2 flex items-center justify-between pt-1.5 border-t border-white/10">
+                    <span className="text-[10px] text-teal-400 font-semibold">{m.matchPct}% match</span>
+                    <span className="text-[10px] text-white/70 group-hover:text-white flex items-center gap-0.5">Preview &rarr;</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
       {/* Live Sandbox Search Section */}
       <section id="sandbox" className="relative max-w-5xl mx-auto px-6 py-16 my-8 border border-teal-500/20 rounded-3xl bg-gradient-to-b from-[#0E1B30] to-[#0A1324] shadow-2xl">
         <div className="text-center max-w-xl mx-auto mb-8">
@@ -547,7 +635,7 @@ function LandingPage({ onGetStarted, onLogin }: { onGetStarted: () => void; onLo
             <div className="flex-1">
               <div className="flex items-center justify-between mb-2">
                 <h4 className="text-white font-bold text-base">{sandboxSelected.title} ({sandboxSelected.release_date?.slice(0, 4)})</h4>
-                <SafeBadge rating="safe" size="sm" />
+                <SafeBadge rating="unknown" size="sm" label="Not rated — no profile" />
               </div>
               <p className="text-slate-300 text-xs leading-relaxed mb-3 line-clamp-3">{sandboxSelected.overview || "No overview available for this title."}</p>
               <button onClick={() => setAuthMode("signup")} className="bg-teal-500 hover:bg-teal-400 text-white font-semibold px-4 py-2 rounded-xl text-xs inline-flex items-center gap-1 shadow">
@@ -594,7 +682,7 @@ function LandingPage({ onGetStarted, onLogin }: { onGetStarted: () => void; onLo
           {[
             { num: "01", title: "Build Your Profile", desc: "Select triggers across violence, phobias, addiction, audio, and visual sensitivity categories." },
             { num: "02", title: "Verified Trigger Data", desc: "We pull community-verified trigger reports and analyze movie scripts with AI." },
-            { num: "03", title: "Watch Stress-Free", desc: "Get instant GREEN/YELLOW/RED ratings, scene timestamps, and spoiler-free context." }
+            { num: "03", title: "Watch Stress-Free", desc: "Get GREEN/YELLOW/RED ratings with the community evidence behind them — or an honest \"Insufficient Data\" when there isn't enough to go on." }
           ].map(s => (
             <div key={s.num} className="p-8 rounded-3xl border border-white/8 bg-white/5 relative">
               <span className="text-5xl font-extrabold text-teal-500/20 mb-4 block">{s.num}</span>
@@ -627,8 +715,8 @@ function LandingPage({ onGetStarted, onLogin }: { onGetStarted: () => void; onLo
         </div>
         <p className="text-slate-500 text-xs">© 2026 ClearWatch Inc. Trauma-informed content safety engine. All rights reserved.</p>
         <div className="flex gap-6 text-slate-400 text-xs font-medium">
-          <button onClick={() => setInfoModal("Privacy Policy: Your sensitivity data is stored with end-to-end user isolation in SQLite and is never sold or shared with third parties.")} className="hover:text-white transition-colors">Privacy</button>
-          <button onClick={() => setInfoModal("Terms of Service: ClearWatch provides community and AI-generated media guidance for informational safety purposes.")} className="hover:text-white transition-colors">Terms</button>
+          <button onClick={() => setInfoModal("Privacy: Your sensitivity profile is stored on our server and sent to our AI provider (Groq) to generate your ratings. It is never sold. You can download or delete all of your data at any time from your Profile.")} className="hover:text-white transition-colors">Privacy</button>
+          <button onClick={() => setInfoModal("Terms: ClearWatch ratings combine community reports from DoesTheDogDie.com with an AI summary. They can be incomplete or wrong and are not professional, medical, or clinical advice. If a title matters to your wellbeing, check other sources before watching.")} className="hover:text-white transition-colors">Terms</button>
           <button onClick={() => setInfoModal("Support Contact: Reach out to support@clearwatch.app for questions or trigger report feedback.")} className="hover:text-white transition-colors">Contact</button>
         </div>
       </footer>
@@ -649,10 +737,10 @@ function LandingPage({ onGetStarted, onLogin }: { onGetStarted: () => void; onLo
         <AuthModal
           mode={authMode}
           onClose={() => setAuthMode(null)}
-          onSuccess={() => {
+          onSuccess={(isNewUser) => {
             const wasSignup = authMode === "signup";
             setAuthMode(null);
-            wasSignup ? onGetStarted() : onLogin();
+            if (wasSignup || isNewUser) onGetStarted(); else onLogin();
           }}
         />
       )}
@@ -663,21 +751,61 @@ function LandingPage({ onGetStarted, onLogin }: { onGetStarted: () => void; onLo
 // ─── Auth ────────────────────────────────────────────────────────────────────
 
 function AuthModal({ mode, onClose, onSuccess }: {
-  mode: "login" | "signup"; onClose: () => void; onSuccess: () => void;
+  mode: "login" | "signup"; onClose: () => void; onSuccess: (isNewUser?: boolean) => void;
 }) {
   const [isSignup, setIsSignup] = useState(mode === "signup");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [consent, setConsent] = useState<{ version: string; text: string } | null>(null);
+  const [consentChecked, setConsentChecked] = useState(false);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  // Sensitivities can be health-related, so sign-up needs informed consent.
+  // Loaded in both modes: "Continue with Google" can create an account too.
+  useEffect(() => {
+    if (consent) return;
+    getConsentText().then(setConsent).catch(() => setError("Couldn't load the privacy notice — check your connection and try again."));
+  }, [consent]);
+
+  async function handleGoogle() {
+    if (!consent || (isSignup && !consentChecked)) return;
     setLoading(true);
     setError(null);
     try {
-      if (isSignup) {
+      const { isNewUser } = await signInWithGoogle();
+      if (isNewUser) {
+        // In "Log in" mode the notice is shown right under the button.
+        await recordConsent(consent.version).catch(err => console.error("Failed to record consent:", err));
+      }
+      onSuccess(isNewUser);
+    } catch (err) {
+      const code = (err as { code?: string })?.code ?? "";
+      if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") return;
+      setError(code === "auth/operation-not-allowed"
+        ? "Google sign-in isn't enabled for this app yet."
+        : code === "auth/unauthorized-domain"
+          ? "Google sign-in isn't set up for this website address yet."
+          : "Couldn't sign in with Google. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (isSignup && (!consent || !consentChecked)) return;
+    setLoading(true);
+    setError(null);
+    try {
+      if (isSignup && consent) {
         await signUp(email, password);
+        try {
+          await recordConsent(consent.version);
+        } catch (err) {
+          // The account exists by now; don't block the user on a failed record.
+          console.error("Failed to record consent:", err);
+        }
       } else {
         await logIn(email, password);
       }
@@ -708,14 +836,37 @@ function AuthModal({ mode, onClose, onSuccess }: {
             onChange={e => setPassword(e.target.value)}
             className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-slate-500 text-sm focus:outline-none focus:border-teal-500"
           />
+          {isSignup && consent && (
+            <label className="flex items-start gap-2.5 text-xs text-slate-300 leading-relaxed cursor-pointer pt-1">
+              <input type="checkbox" required checked={consentChecked} onChange={e => setConsentChecked(e.target.checked)}
+                className="mt-0.5 accent-teal-500 flex-shrink-0" />
+              <span>{consent.text}</span>
+            </label>
+          )}
           {error && <p className="text-red-400 text-xs">{error}</p>}
           <button
-            type="submit" disabled={loading}
+            type="submit" disabled={loading || (isSignup && (!consent || !consentChecked))}
             className="w-full py-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-white text-sm font-semibold transition-colors disabled:opacity-60"
           >
             {loading ? "Please wait…" : isSignup ? "Create account" : "Log in"}
           </button>
         </form>
+        {googleSignInAvailable && (
+          <>
+            <div className="flex items-center gap-3 my-4 text-slate-500 text-[11px] uppercase tracking-wider">
+              <span className="flex-1 h-px bg-white/10" /> or <span className="flex-1 h-px bg-white/10" />
+            </div>
+            <button type="button" onClick={handleGoogle}
+              disabled={loading || !consent || (isSignup && !consentChecked)}
+              className="w-full py-2.5 rounded-xl bg-white text-slate-900 text-sm font-semibold hover:bg-slate-100 transition-colors disabled:opacity-60 flex items-center justify-center gap-2">
+              <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.6 5.4 2.7 13.3l7.9 6.1C12.5 13.6 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.6c0-1.6-.1-3.1-.4-4.6H24v9h12.4c-.5 2.9-2.2 5.3-4.6 6.9l7.4 5.7c4.3-4 6.9-9.9 6.9-17z"/><path fill="#FBBC05" d="M10.6 28.6c-.5-1.4-.8-3-.8-4.6s.3-3.2.8-4.6l-7.9-6.1C1 16.6 0 20.2 0 24s1 7.4 2.7 10.7l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.4-5.7c-2.1 1.4-4.8 2.3-8.5 2.3-6.2 0-11.5-4.1-13.4-9.8l-7.9 6.1C6.6 42.6 14.6 48 24 48z"/></svg>
+              Continue with Google
+            </button>
+            {!isSignup && consent && (
+              <p className="text-[11px] text-slate-500 leading-relaxed mt-2">New to ClearWatch? By continuing with Google you agree: {consent.text}</p>
+            )}
+          </>
+        )}
         <button onClick={() => { setIsSignup(v => !v); setError(null); }} className="w-full text-center mt-4 text-slate-400 hover:text-white text-xs">
           {isSignup ? "Already have an account? Log in" : "New here? Create an account"}
         </button>
@@ -765,7 +916,7 @@ function OnboardingFlow({ onComplete, initialProfile }: {
   const [kidsMode, setKidsMode] = useState<boolean>(initialProfile?.kidsMode ?? false);
   const TOTAL = 7;
 
-  const toggle = (set: Set<string>, val: string) => { const n = new Set(set); n.has(val) ? n.delete(val) : n.add(val); return n; };
+  const toggle = (set: Set<string>, val: string) => { const n = new Set(set); if (n.has(val)) n.delete(val); else n.add(val); return n; };
 
   function transition(fn: () => void) {
     setVisible(false);
@@ -803,8 +954,6 @@ function OnboardingFlow({ onComplete, initialProfile }: {
   })).filter(cat => cat.items.length > 0);
 
   // Compute live match preview based on selected triggers & strictness
-  const previewMatch = Math.max(15, Math.min(98, 100 - (triggerItems.size * (strictness > 66 ? 18 : strictness < 33 ? 8 : 12)) - (kidsMode ? 15 : 0)));
-  const previewRating: Rating = previewMatch > 75 ? "safe" : previewMatch > 45 ? "caution" : "avoid";
 
   return (
     <div className="min-h-screen flex" style={{ background: "linear-gradient(135deg, #060D1A 0%, #0D1526 100%)" }}>
@@ -837,8 +986,8 @@ function OnboardingFlow({ onComplete, initialProfile }: {
         </div>
 
         <div className="mt-auto pt-6 text-slate-500 text-xs leading-relaxed border-t border-white/6">
-          <p className="flex items-center gap-1.5 mb-1 text-slate-400"><span>🔒</span> 100% Private & Encrypted</p>
-          <p>Your sensitivity preferences stay linked only to your account and can be updated anytime.</p>
+          <p className="flex items-center gap-1.5 mb-1 text-slate-400"><span>🔒</span> Your data, your control</p>
+          <p>Your sensitivity preferences are linked to your account, used only to rate titles for you, and can be updated or deleted anytime.</p>
         </div>
       </div>
 
@@ -1101,20 +1250,21 @@ function OnboardingFlow({ onComplete, initialProfile }: {
                     </button>
                   </div>
 
-                  {/* Live Rating Preview Box */}
-                  <div className="bg-gradient-to-r from-teal-950/40 to-slate-900/60 p-5 rounded-2xl border border-teal-500/30">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-teal-400 mb-3 flex items-center gap-1.5">
-                      <Sparkles size={14} /> Live Sample Rating Preview
-                    </p>
-                    <div className="flex items-center justify-between bg-black/40 p-4 rounded-xl border border-white/8">
-                      <div>
-                        <p className="text-white font-semibold text-sm">Inside Out 2 (2024)</p>
-                        <p className="text-xs text-slate-400 mt-0.5">Evaluated against {triggerItems.size} active sensitivity triggers</p>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <SafeBadge rating={previewRating} size="sm" />
-                        <span className="text-sm font-bold text-white">{previewMatch}% Match</span>
-                      </div>
+                  {/* Spoiler preference — reading the details can itself be the trigger */}
+                  <div className="bg-[#1C2D45] p-5 rounded-2xl border border-white/10">
+                    <p className="text-sm font-semibold text-white mb-1">How much detail in warnings?</p>
+                    <p className="text-xs text-slate-400 mb-3">Sometimes reading the details is upsetting in itself. You can always tap to see more on any title.</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {([
+                        { id: "vague", label: "Categories only", sub: "e.g. \"Animal cruelty or death — confirmed\". Specifics stay hidden until you tap." },
+                        { id: "detailed", label: "Show specifics", sub: "Show which specific triggers were reported, and how strongly, right away." },
+                      ] as const).map(o => (
+                        <button key={o.id} onClick={() => setSpoilerPref(o.id)} aria-pressed={spoilerPref === o.id}
+                          className={`text-left p-4 rounded-xl border transition-colors ${spoilerPref === o.id ? "border-teal-400 bg-teal-500/15" : "border-white/10 bg-white/5 hover:border-white/20"}`}>
+                          <p className="text-sm font-semibold text-white">{o.label}</p>
+                          <p className="text-xs text-slate-400 mt-1">{o.sub}</p>
+                        </button>
+                      ))}
                     </div>
                   </div>
                 </div>
@@ -1357,9 +1507,14 @@ function HomeScreen({ movies, loading, watchlist, onMovie, userName, collections
 
 // ─── Movie Detail Modal ───────────────────────────────────────────────────────
 
-function MovieDetailModal({ movie, inWatchlist, onClose, onToggleWatchlist }: {
+function MovieDetailModal({ movie, inWatchlist, onClose, onToggleWatchlist, spoilerPref }: {
   movie: Movie; inWatchlist: boolean; onClose: () => void; onToggleWatchlist: () => void;
+  spoilerPref?: "vague" | "detailed" | null;
 }) {
+  // For someone who flagged a trigger, reading the specifics can itself be the
+  // exposure — so they stay hidden until asked for, unless the user opted in.
+  const [showSpecifics, setShowSpecifics] = useState(spoilerPref === "detailed");
+  const hasSpecifics = !!movie.details || movie.triggers.some(t => t.note);
   const [feedback, setFeedback] = useState<"up" | "down" | null>(null);
   const [feedbackNote, setFeedbackNote] = useState("");
   const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
@@ -1377,15 +1532,38 @@ function MovieDetailModal({ movie, inWatchlist, onClose, onToggleWatchlist }: {
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
       <div className="relative bg-card rounded-3xl shadow-2xl overflow-hidden w-full max-w-5xl max-h-[90vh] flex flex-col lg:flex-row border border-border">
         {/* Left: Cinematic poster */}
-        <div className="relative lg:w-80 flex-shrink-0 h-48 lg:h-auto overflow-hidden">
+        <div className="relative lg:w-80 flex-shrink-0 h-64 lg:h-auto overflow-hidden bg-slate-950 flex items-center justify-center">
           {/* Blurred backdrop */}
-          <div className="absolute inset-0 scale-110" style={{ background: movie.gradient, filter: "blur(40px)", opacity: 0.7 }} />
+          {movie.posterUrl ? (
+            <img
+              src={movie.posterUrl}
+              alt=""
+              className="absolute inset-0 w-full h-full object-cover scale-125 blur-2xl opacity-40"
+            />
+          ) : (
+            <div className="absolute inset-0 scale-110" style={{ background: movie.gradient, filter: "blur(40px)", opacity: 0.7 }} />
+          )}
+
           {/* Poster centered */}
-          <div className="absolute inset-0 flex items-center justify-center p-8">
-            <div className="w-36 lg:w-48 aspect-[2/3] rounded-2xl shadow-2xl" style={{ background: movie.gradient }} />
+          <div className="relative z-10 p-6 sm:p-8 flex items-center justify-center w-full">
+            <div className="w-40 sm:w-48 lg:w-56 aspect-[2/3] rounded-2xl shadow-2xl overflow-hidden border border-white/15 relative" style={{ background: movie.gradient }}>
+              {movie.posterUrl ? (
+                <img
+                  src={movie.posterUrl}
+                  alt={movie.title}
+                  onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
+                  className="w-full h-full object-cover shadow-2xl"
+                />
+              ) : null}
+              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex flex-col justify-end p-3">
+                <p className="text-white text-xs font-bold truncate">{movie.title}</p>
+                <p className="text-white/60 text-[10px]">{movie.year} · {movie.genre}</p>
+              </div>
+            </div>
           </div>
+
           {/* Close button */}
-          <button onClick={onClose} className="absolute top-4 left-4 w-9 h-9 bg-black/50 backdrop-blur-sm rounded-full flex items-center justify-center text-white hover:bg-black/70 transition-colors">
+          <button onClick={onClose} className="absolute top-4 left-4 z-20 w-9 h-9 bg-black/60 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-black/80 transition-colors shadow-lg">
             <X size={17} />
           </button>
         </div>
@@ -1415,19 +1593,42 @@ function MovieDetailModal({ movie, inWatchlist, onClose, onToggleWatchlist }: {
                 <MatchRing pct={movie.matchPct} rating={movie.rating} size={72} />
               </div>
               <p className="text-sm text-foreground leading-relaxed">{movie.aiNote}</p>
+              <p className="text-[11px] text-muted-foreground leading-relaxed mt-2">
+                Based on community reports from DoesTheDogDie.com and an AI summary. Reports can be incomplete — this isn&apos;t professional or clinical advice.
+              </p>
+              {movie.unverified && movie.unverified.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-border">
+                  <p className="text-[10px] uppercase tracking-widest font-semibold text-muted-foreground mb-2">Not enough data to rule out</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {movie.unverified.map(u => (
+                      <span key={u} className="text-xs px-2.5 py-1 rounded-full bg-muted text-foreground">{u}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
           {/* Triggers */}
           <div>
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
               <h3 className="font-semibold text-foreground text-sm">Trigger Breakdown</h3>
-              {movie.triggers.length > 3 && (
-                <button onClick={() => setShowAllTriggers(v => !v)} className="text-xs text-primary font-medium">
-                  {showAllTriggers ? "Show less" : `Show all ${movie.triggers.length}`}
-                </button>
-              )}
+              <div className="flex items-center gap-3">
+                {hasSpecifics && (
+                  <button onClick={() => setShowSpecifics(v => !v)} className="text-xs text-primary font-medium" aria-expanded={showSpecifics}>
+                    {showSpecifics ? "Hide specifics" : "Show specifics (may include spoilers)"}
+                  </button>
+                )}
+                {movie.triggers.length > 3 && (
+                  <button onClick={() => setShowAllTriggers(v => !v)} className="text-xs text-primary font-medium">
+                    {showAllTriggers ? "Show less" : `Show all ${movie.triggers.length}`}
+                  </button>
+                )}
+              </div>
             </div>
+            {showSpecifics && movie.details && (
+              <p className="text-sm text-foreground leading-relaxed mb-3 bg-muted/40 rounded-xl px-4 py-3">{movie.details}</p>
+            )}
             <div className="space-y-2">
               {(showAllTriggers ? movie.triggers : movie.triggers.slice(0, 3)).map(t => (
                 <div key={t.id} className="flex items-start gap-3 bg-background rounded-xl px-4 py-3 border border-border">
@@ -1435,9 +1636,9 @@ function MovieDetailModal({ movie, inWatchlist, onClose, onToggleWatchlist }: {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap mb-1">
                       <span className="text-sm font-medium text-foreground">{t.label}</span>
-                      <SafeBadge rating={t.level} />
+                      <SafeBadge rating={t.level} label={t.badge} />
                     </div>
-                    <p className="text-xs text-muted-foreground leading-relaxed">{t.note}</p>
+                    {showSpecifics && t.note && <p className="text-xs text-muted-foreground leading-relaxed">{t.note}</p>}
                   </div>
                 </div>
               ))}
@@ -1524,19 +1725,23 @@ function SearchScreen({ onSelectResult, ratingLoadingId }: {
   // Debounced live search — waits 400ms after typing stops before hitting the backend
   useEffect(() => {
     if (!query.trim()) { setResults([]); setError(null); return; }
+    // Abort the in-flight request when the query changes, so a slow response
+    // for an old query can never overwrite results for the current one.
+    const controller = new AbortController();
     const handle = setTimeout(async () => {
       setLoading(true);
       setError(null);
       try {
-        const data = await apiSearchMovies(query);
+        const data = await apiSearchMovies(query, controller.signal);
         setResults(data);
-      } catch (err) {
+      } catch {
+        if (controller.signal.aborted) return;
         setError("Couldn't reach the server. Is the backend running?");
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     }, 400);
-    return () => clearTimeout(handle);
+    return () => { clearTimeout(handle); controller.abort(); };
   }, [query]);
 
   return (
@@ -1667,7 +1872,7 @@ function ChatScreen({ onMovie, onSelectSuggested, ratingLoadingId }: {
     setHistory(nextHistory);
     setTyping(true);
     try {
-      const response = await sendChatMessage(nextHistory);
+      const response = await sendChatMessage(text);
       setHistory(h => [...h, { role: "assistant", content: response.reply }]);
       setMsgs(m => [...m, {
         id: (Date.now() + 1).toString(),
@@ -1676,11 +1881,13 @@ function ChatScreen({ onMovie, onSelectSuggested, ratingLoadingId }: {
         ratedMovies: response.ratedMovies?.map(rateResponseToMovie),
         suggestedMovies: response.suggestedMovies,
       }]);
-    } catch {
+    } catch (err) {
       setMsgs(m => [...m, {
         id: (Date.now() + 1).toString(),
         role: "ai",
-        text: "Sorry, I couldn't get an answer just then — mind trying again?",
+        text: err instanceof ApiError && err.isUserFacing
+          ? err.message
+          : "Sorry, I couldn't get an answer just then — mind trying again?",
       }]);
     } finally {
       setTyping(false);
@@ -1731,7 +1938,7 @@ function ChatScreen({ onMovie, onSelectSuggested, ratingLoadingId }: {
           <div className="w-10 h-10 bg-primary rounded-full flex items-center justify-center"><Shield size={17} className="text-primary-foreground" /></div>
           <div>
             <p className="font-semibold text-foreground">ClearWatch AI</p>
-            <p className="text-xs text-muted-foreground">Personalized to your profile · Always spoiler-free</p>
+            <p className="text-xs text-muted-foreground">Personalized to your profile · Based on community reports</p>
           </div>
         </div>
         <button onClick={handleClear} disabled={history.length === 0} title="Clear Chat History"
@@ -1888,6 +2095,18 @@ function ProfileScreen({ userName, darkMode, onToggleDark, profile, onUpdateProf
     }
   }
 
+  const [exporting, setExporting] = useState(false);
+  async function handleDownloadData() {
+    setExporting(true);
+    try {
+      await downloadMyData();
+    } catch (err) {
+      window.alert(err instanceof ApiError && err.isUserFacing ? err.message : "Couldn't download your data. Please try again.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function handleDeleteAccount() {
     const confirmed = window.confirm(
       "This permanently deletes your profile, watchlist, and saved data. This can't be undone. Are you sure?"
@@ -1975,6 +2194,7 @@ function ProfileScreen({ userName, darkMode, onToggleDark, profile, onUpdateProf
           { label: "Edit Sensitivity Profile", icon: <SlidersHorizontal size={16} />, cls: "text-foreground", onClick: onEditProfile },
           { label: "Re-take Onboarding Questionnaire", icon: <RotateCcw size={16} />, cls: "text-foreground", onClick: onRetakeOnboarding },
           { label: reporting ? "Submitting…" : "Report a Missing Trigger", icon: <Flag size={16} />, cls: "text-foreground", onClick: handleReportTrigger, disabled: reporting },
+          { label: exporting ? "Preparing…" : "Download My Data", icon: <Download size={16} />, cls: "text-foreground", onClick: handleDownloadData, disabled: exporting },
           { label: deleting ? "Deleting…" : "Delete Account", icon: <X size={16} />, cls: "text-destructive", onClick: handleDeleteAccount, disabled: deleting },
         ].map((item, i, arr) => (
           <button key={item.label} onClick={item.onClick} disabled={item.disabled}
@@ -1991,9 +2211,17 @@ function ProfileScreen({ userName, darkMode, onToggleDark, profile, onUpdateProf
   );
 }
 
-// ─── Notification Panel ───────────────────────────────────────────────────────
-
-function NotificationPanel({ onClose }: { onClose: () => void }) {
+function NotificationPanel({
+  onClose,
+  onOpenMovie,
+  onOpenProfile,
+  onOpenWatchlist,
+}: {
+  onClose: () => void;
+  onOpenMovie?: (movieId: string, title?: string) => void;
+  onOpenProfile?: () => void;
+  onOpenWatchlist?: () => void;
+}) {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const TMDB_IMG = "https://image.tmdb.org/t/p/w92";
@@ -2017,20 +2245,34 @@ function NotificationPanel({ onClose }: { onClose: () => void }) {
     return `${Math.floor(hrs / 24)}d ago`;
   }
 
+  function handleNotificationClick(n: AppNotification) {
+    onClose();
+    if (n.movieId && onOpenMovie) {
+      onOpenMovie(n.movieId, n.movieTitle ?? undefined);
+    } else if (n.type === "profile_suggestion" || n.type === "profile_update") {
+      if (onOpenProfile) onOpenProfile();
+    } else if (n.type === "watchlist_add") {
+      if (onOpenWatchlist) onOpenWatchlist();
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50" onClick={onClose}>
       <div
         onClick={e => e.stopPropagation()}
-        className="absolute top-14 right-4 lg:right-8 w-80 bg-card border border-border rounded-2xl shadow-2xl overflow-hidden"
+        className="absolute top-14 right-4 lg:right-8 w-88 max-w-[90vw] bg-card border border-border rounded-2xl shadow-2xl overflow-hidden"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-          <p className="font-semibold text-foreground text-sm">Notifications</p>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30">
+          <div className="flex items-center gap-2">
+            <Bell size={16} className="text-primary" />
+            <p className="font-semibold text-foreground text-sm">Notifications</p>
+          </div>
           <button onClick={onClose} className="p-1 text-muted-foreground hover:text-foreground"><X size={15} /></button>
         </div>
 
         {/* Body */}
-        <div className="max-h-96 overflow-y-auto scrollbar-hide">
+        <div className="max-h-96 overflow-y-auto scrollbar-hide divide-y divide-border">
           {loading && (
             <div className="text-center py-8 text-muted-foreground text-sm">Loading…</div>
           )}
@@ -2042,20 +2284,31 @@ function NotificationPanel({ onClose }: { onClose: () => void }) {
             </div>
           )}
           {!loading && notifications.map(n => (
-            <div key={n.id} className={`flex gap-3 px-4 py-3 border-b border-border last:border-none ${!n.read ? "bg-primary/5" : ""}`}>
+            <div
+              key={n.id}
+              onClick={() => handleNotificationClick(n)}
+              className={`flex gap-3 px-4 py-3.5 hover:bg-muted/60 transition-colors cursor-pointer group ${!n.read ? "bg-primary/5" : ""}`}
+            >
               {n.posterPath ? (
-                <img src={`${TMDB_IMG}${n.posterPath}`} alt={n.movieTitle ?? ""} className="w-10 h-14 rounded-lg object-cover flex-shrink-0" />
+                <img src={`${TMDB_IMG}${n.posterPath}`} alt={n.movieTitle ?? ""} className="w-11 h-15 rounded-lg object-cover flex-shrink-0 shadow-sm group-hover:scale-105 transition-transform" />
               ) : (
-                <div className="w-10 h-14 rounded-lg bg-muted flex-shrink-0 flex items-center justify-center">
-                  <Bell size={14} className="text-muted-foreground" />
+                <div className="w-11 h-15 rounded-lg bg-primary/10 flex-shrink-0 flex items-center justify-center text-primary">
+                  {n.type === "profile_suggestion" ? <SlidersHorizontal size={18} /> : <Sparkles size={18} />}
                 </div>
               )}
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold text-foreground leading-tight">{n.title}</p>
+                <div className="flex items-center justify-between gap-1">
+                  <p className="text-xs font-semibold text-foreground leading-tight">{n.title}</p>
+                  {!n.read && <div className="w-2 h-2 bg-primary rounded-full flex-shrink-0" />}
+                </div>
                 <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{n.body}</p>
-                <p className="text-[10px] text-muted-foreground/50 mt-1">{timeAgo(n.createdAt)}</p>
+                <div className="flex items-center justify-between mt-1.5">
+                  <span className="text-[10px] text-muted-foreground/60">{timeAgo(n.createdAt)}</span>
+                  <span className="text-[10px] text-primary font-medium opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
+                    {n.movieId ? "View Movie" : "Open"} <ChevronRight size={10} />
+                  </span>
+                </div>
               </div>
-              {!n.read && <div className="w-2 h-2 bg-primary rounded-full mt-1 flex-shrink-0" />}
             </div>
           ))}
         </div>
@@ -2125,8 +2378,16 @@ function AppShell({ userName, userProfile, darkMode, onToggleDark, onLogout, onU
   // for 24h, so this is instant except the first time each day).
   useEffect(() => {
     apiGetRecommendations()
-      .then(results => setHomeMovies(results.map(rateResponseToMovie)))
-      .catch(() => { /* not fatal — dashboard just shows the empty state */ })
+      .then(results => {
+        if (results && results.length > 0) {
+          setHomeMovies(results.map(rateResponseToMovie));
+        } else {
+          setHomeMovies(MOVIES);
+        }
+      })
+      .catch(() => {
+        setHomeMovies(MOVIES);
+      })
       .finally(() => setHomeLoading(false));
   }, []);
 
@@ -2149,7 +2410,9 @@ function AppShell({ userName, userProfile, darkMode, onToggleDark, onLogout, onU
       const data = await apiRateMovie(result.id, userProfile ?? {});
       openMovieDetail(rateResponseToMovie(data));
     } catch (err) {
-      setRatingError("Couldn't get a safety rating for that title. Try again?");
+      setRatingError(err instanceof ApiError && err.isUserFacing
+        ? err.message
+        : "Couldn't get a safety rating for that title. Try again?");
     } finally {
       setRatingLoadingId(null);
     }
@@ -2289,12 +2552,35 @@ function AppShell({ userName, userProfile, darkMode, onToggleDark, onLogout, onU
 
       {/* Movie detail modal */}
       {selectedMovie && (
-        <MovieDetailModal movie={selectedMovie} inWatchlist={watchlist.has(selectedMovie.id)}
+        <MovieDetailModal movie={selectedMovie} inWatchlist={watchlist.has(selectedMovie.id)} spoilerPref={userProfile?.spoilerPref}
           onClose={() => setSelectedMovie(null)} onToggleWatchlist={() => watchlist.has(selectedMovie.id) ? removeMovieFromWatchlist(selectedMovie.id) : addMovieToWatchlist(selectedMovie)} />  
       )}
 
       {/* Notification panel */}
-      {notifOpen && <NotificationPanel onClose={() => setNotifOpen(false)} />}
+      {notifOpen && (
+        <NotificationPanel
+          onClose={() => setNotifOpen(false)}
+          onOpenMovie={(movieId, title) => {
+            const found = homeMovies.find(m => m.id === String(movieId)) || MOVIES.find(m => m.id === String(movieId) || m.title.toLowerCase() === title?.toLowerCase());
+            if (found) {
+              openMovieDetail(found);
+            } else {
+              handleSelectResult({
+                id: Number(movieId) || 1022789,
+                title: title || "Movie",
+                release_date: "2024-01-01",
+                poster_path: null,
+                overview: "",
+              });
+            }
+          }}
+          onOpenProfile={() => {
+            setTab("profile");
+            onEditProfile();
+          }}
+          onOpenWatchlist={() => setTab("watchlist")}
+        />
+      )}
     </div>
   );
 }
@@ -2317,12 +2603,19 @@ export default function App() {
 
   // Real update+persist for settings toggles (strictness, Kids Mode,
   // notifications) — merges into the existing profile and saves it.
+  // Debounced: dragging the strictness slider fires a change per tick, which
+  // used to send dozens of saves (and trip the server's write limit).
+  const profileRef = useRef<UserProfile | null>(null);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => { profileRef.current = userProfile; }, [userProfile]);
   function updateProfile(patch: Partial<UserProfile>) {
-    setUserProfile(prev => {
-      const next = { ...(prev ?? ({} as UserProfile)), ...patch };
+    const next = { ...(profileRef.current ?? ({} as UserProfile)), ...patch };
+    profileRef.current = next;
+    setUserProfile(next);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
       saveProfile(next).catch(() => { /* not fatal — still applied this session */ });
-      return next;
-    });
+    }, 600);
   }
 
   return (

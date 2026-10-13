@@ -5,6 +5,28 @@
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
+// Carries the server's own error message (e.g. rate limits, "AI is busy")
+// so the UI can show something actionable instead of a bare status code.
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+  /** Worth showing to the user as-is: busy / rate-limited / daily cap. */
+  get isUserFacing(): boolean {
+    return this.status === 429 || this.status === 503;
+  }
+}
+
+async function apiError(res: Response, fallback: string): Promise<ApiError> {
+  try {
+    const body = await res.json();
+    if (typeof body?.error === "string") return new ApiError(body.error, res.status);
+  } catch { /* not JSON */ }
+  return new ApiError(`${fallback}: ${res.status}`, res.status);
+}
+
 // ─── Health check ──────────────────────────────────────────────────────────
 export async function checkHealth(): Promise<boolean> {
   try {
@@ -27,9 +49,10 @@ export interface TmdbSearchResult {
   overview: string;
 }
 
-export async function searchMovies(query: string): Promise<TmdbSearchResult[]> {
+export async function searchMovies(query: string, signal?: AbortSignal): Promise<TmdbSearchResult[]> {
   const res = await fetch(
-    `${API_URL}/api/movies/search?query=${encodeURIComponent(query)}`
+    `${API_URL}/api/movies/search?query=${encodeURIComponent(query)}`,
+    { signal }
   );
   if (!res.ok) throw new Error(`Search failed: ${res.status}`);
   const data = await res.json();
@@ -57,10 +80,18 @@ export interface DDDTrigger {
 }
 
 export interface AIRating {
-  rating: "GREEN" | "YELLOW" | "RED";
-  explanation: string;
-  topTriggers: string[]; // just plain strings, no per-trigger safe/caution/avoid level yet
-  matchPct: number; // 0-100, computed by the AI alongside the rating itself
+  // INSUFFICIENT_DATA: the server couldn't verify enough to call it safe —
+  // no community data, no profile, or one of the user's categories unverified.
+  rating: "GREEN" | "YELLOW" | "RED" | "INSUFFICIENT_DATA";
+  reason?: "no_data" | "no_profile" | "partial_data";
+  explanation: string; // spoiler-safe, category-level summary — safe to show by default
+  details?: string; // AI prose naming specific triggers — only behind a deliberate tap
+  topTriggers: string[]; // specific DDD topics (specifics)
+  matchPct: number | null; // 0-100; null when there isn't enough data to score
+  coverage?: {
+    confirmed: string[]; clear: string[]; unverified: string[];
+    evidence?: Record<string, { topic: string; yes: number; no: number }[]>;
+  };
 }
 
 export interface RateResponse {
@@ -91,7 +122,7 @@ export async function rateMovie(
     headers: { "Content-Type": "application/json", ...(await authHeader()) },
     body: JSON.stringify({ userProfile }),
   });
-  if (!res.ok) throw new Error(`Rating failed: ${res.status}`);
+  if (!res.ok) throw await apiError(res, "Rating failed");
   return res.json();
 }
 
@@ -181,13 +212,14 @@ export interface ChatResponse {
   suggestedMovies: TmdbSearchResult[]; // movies just suggested, not yet rated — click to check
 }
 
-export async function sendChatMessage(messages: ChatMessageInput[]): Promise<ChatResponse> {
+// Sends only the new message — the server keeps the conversation history.
+export async function sendChatMessage(message: string): Promise<ChatResponse> {
   const res = await fetch(`${API_URL}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(await authHeader()) },
-    body: JSON.stringify({ messages }),
+    body: JSON.stringify({ message }),
   });
-  if (!res.ok) throw new Error(`Chat failed: ${res.status}`);
+  if (!res.ok) throw await apiError(res, "Chat failed");
   return res.json();
 }
 
@@ -239,9 +271,39 @@ export async function deleteAccountData(): Promise<void> {
   if (!res.ok) throw new Error(`Failed to delete account: ${res.status}`);
 }
 
+// ─── Consent + data export ───────────────────────────────────────────────
+// The consent text comes from the server so what the user sees is exactly
+// what gets recorded against their account.
+export async function getConsentText(): Promise<{ version: string; text: string }> {
+  const res = await fetch(`${API_URL}/api/consent`);
+  if (!res.ok) throw await apiError(res, "Failed to load consent text");
+  return res.json();
+}
+
+export async function recordConsent(version: string): Promise<void> {
+  const res = await fetch(`${API_URL}/api/consent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(await authHeader()) },
+    body: JSON.stringify({ version }),
+  });
+  if (!res.ok) throw await apiError(res, "Failed to record consent");
+}
+
+// Downloads everything the server stores about the user as a JSON file.
+export async function downloadMyData(): Promise<void> {
+  const res = await fetch(`${API_URL}/api/account/export`, { headers: await authHeader() });
+  if (!res.ok) throw await apiError(res, "Failed to export data");
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "clearwatch-my-data.json";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ─── Notifications ───────────────────────────────────────────────────────────
 export interface AppNotification {
-  id: number;
+  id: string; // Firestore document ID
   type: string;
   title: string;
   body: string;
@@ -258,7 +320,7 @@ export async function getNotifications(): Promise<{ notifications: AppNotificati
   return res.json();
 }
 
-export async function markNotificationsRead(ids?: number[]): Promise<void> {
+export async function markNotificationsRead(ids?: string[]): Promise<void> {
   const res = await fetch(`${API_URL}/api/notifications/read`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(await authHeader()) },
@@ -271,10 +333,11 @@ export async function markNotificationsRead(ids?: number[]): Promise<void> {
 // ─── Adapters: backend shape → frontend's Movie/Trigger types ──────────────
 // Converts the real API response into the shape App.tsx's mock MOVIES array uses.
 
-const RATING_MAP: Record<AIRating["rating"], "safe" | "caution" | "avoid"> = {
+const RATING_MAP: Record<AIRating["rating"], "safe" | "caution" | "avoid" | "unknown"> = {
   GREEN: "safe",
   YELLOW: "caution",
   RED: "avoid",
+  INSUFFICIENT_DATA: "unknown",
 };
 
 const TMDB_IMG_BASE = "https://image.tmdb.org/t/p/w500";
@@ -300,17 +363,36 @@ export function rateResponseToMovie(r: RateResponse) {
     mediaType: "movie" as const,
     posterUrl: r.movie.poster_path ? `${TMDB_IMG_BASE}${r.movie.poster_path}` : null,
     gradient: "linear-gradient(135deg,#334155 0%,#1e293b 100%)", // fallback bg behind the real poster image
-    rating: RATING_MAP[r.rating.rating],
-    matchPct: r.rating.matchPct, // now computed by the AI alongside the rating
+    rating: RATING_MAP[r.rating.rating] ?? "unknown",
+    matchPct: r.rating.matchPct ?? null, // null when there isn't enough data to score
+    unverified: r.rating.coverage?.unverified ?? [],
     aiNote: r.rating.explanation,
-    // Only the AI's top 3 named triggers, styled with the overall rating color
-    // since the backend doesn't return a level per individual trigger yet.
-    triggers: (r.rating.topTriggers ?? []).map((topic, i) => ({
-      id: `${i}-${topic}`,
-      label: topic,
-      emoji: "⚠️",
-      level: RATING_MAP[r.rating.rating],
-      note: "",
-    })),
+    details: r.rating.details ?? "",
+    triggers: coverageToTriggers(r.rating),
   };
+}
+
+// One row per category the user cares about. The label (the user's own
+// category) is spoiler-safe; the note lists the specific community-reported
+// topics and is only shown once the user taps "Show specifics".
+function coverageToTriggers(rating: AIRating) {
+  const cov = rating.coverage;
+  const describe = (e: { topic: string; yes: number; no: number }) =>
+    e.yes || e.no ? `${e.topic} (${e.yes} yes / ${e.no} no)` : e.topic;
+  if (!cov) {
+    return (rating.topTriggers ?? []).map((topic, i) => ({
+      id: `${i}-${topic}`, label: topic, emoji: "⚠️", level: RATING_MAP[rating.rating], note: "",
+    }));
+  }
+  const confirmedLevel: "avoid" | "caution" = rating.rating === "RED" ? "avoid" : "caution";
+  return [
+    ...cov.confirmed.map(label => ({
+      id: `confirmed-${label}`, label, emoji: "⚠️", level: confirmedLevel, badge: "Confirmed",
+      note: `Reported by the community: ${(cov.evidence?.[label] ?? []).map(describe).join(" · ")}`,
+    })),
+    ...cov.clear.map(label => ({
+      id: `clear-${label}`, label, emoji: "✓", level: "safe" as const, badge: "Not reported",
+      note: `Checked by the community and not reported: ${(cov.evidence?.[label] ?? []).map(describe).join(" · ")}`,
+    })),
+  ];
 }

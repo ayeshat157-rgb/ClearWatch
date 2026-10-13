@@ -1,0 +1,10 @@
+# Installed fresh inside the image by `npm ci` — the host's copy has
+# Windows-compiled native modules (sqlite3) that crash on Linux.
+node_modules
+
+# Secrets and local data must never be baked into the image.
+.env
+*.sqlite
+data.json.bak
+
+test
