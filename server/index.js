@@ -256,33 +256,36 @@ function describeEvidence(t) {
   return `${triggerYesCount(t)} yes / ${triggerNoCount(t)} no`;
 }
 
-// Keyword map: user-facing trigger label → words likely to appear in DDD topic names.
-// Used to filter the full DDD list down to only what the user selected.
+// Keyword map: user-facing trigger label → phrases that start a word in DDD
+// topic names (see `/api/v3/topics`). Phrases are deliberately specific:
+// a bare "abuse" also matched "alcohol abuse" and "animals are abused",
+// "minor" matched "a minority is misrepresented", and "gaslighting" missed
+// DDD's actual "someone gets gaslighted".
 const TRIGGER_KEYWORD_MAP = {
   // Violence & Physical Harm
-  'domestic violence / abuse':           ['domestic', 'abuse', 'partner', 'violence'],
-  'self-harm or suicide':                ['self-harm', 'suicide', 'self harm', 'suicid'],
-  'graphic gore / dismemberment':        ['gore', 'gory', 'dismember', 'blood', 'graphic violence', 'graphic injury'],
+  'domestic violence / abuse':           ['domestic violence', 'emotional or verbal abuse', 'abused with a belt', 'abuser', 'abusive'],
+  'self-harm or suicide':                ['self harm', 'self-harm', 'suicid'],
+  'graphic gore / dismemberment':        ['gore', 'gory', 'dismember', 'amputation', 'body horror', 'graphic violence'],
   // No 'bug'/'insect' here: DDD's "there are bugs" is a phobia topic, not animal harm.
-  'animal cruelty or death':             ['animal', 'dog', 'cat', 'pet', 'horse', 'bird', 'fish', 'deer'],
+  'animal cruelty or death':             ['animal', 'dog', 'cat', 'pet', 'horse', 'bird', 'fish', 'deer', 'rabbit'],
   // Sexual & Interpersonal Trauma
-  'sexual content & nudity':             ['sex', 'nudity', 'nude', 'sexual content', 'explicit'],
-  'sexual assault references':           ['rape', 'sexual assault', 'non-consensual', 'assault'],
-  'relationship manipulation':           ['manipulation', 'gaslighting', 'emotional abuse', 'coercion'],
+  'sexual content & nudity':             ['sexual content', 'nude', 'nudity', 'sexually objectified', 'sex scene'],
+  'sexual assault references':           ['sexually assaulted', 'sexual assault', 'rape', 'dubious consent', 'non-consensual'],
+  'relationship manipulation':           ['gaslight', 'emotional or verbal abuse', 'manipulat', 'coercion', 'brainwashed', 'stalked'],
   'infidelity storylines':               ['infidel', 'affair', 'cheat', 'unfaithful'],
   // Legacy items (kept for backward compat)
-  'sexual assault or non-consensual content': ['rape', 'sexual assault', 'non-consensual'],
-  'child abuse or neglect':              ['child abuse', 'child neglect', 'child harm', 'minor'],
-  'emotional abuse or gaslighting':      ['gaslighting', 'emotional abuse', 'manipulation'],
+  'sexual assault or non-consensual content': ['sexually assaulted', 'sexual assault', 'rape', 'dubious consent', 'non-consensual'],
+  'child abuse or neglect':              ['child abuse', 'abusive parents', 'abandoned by a parent', 'minor is sexualized'],
+  'emotional abuse or gaslighting':      ['gaslight', 'emotional or verbal abuse', 'manipulat'],
   // Addiction & Substance Use
-  'active drug use / needle depiction':  ['drug', 'needle', 'inject', 'heroin', 'meth', 'cocaine', 'substance'],
-  'alcoholism / heavy drinking':         ['alcohol', 'drink', 'drunk', 'drinking', 'beer', 'wine', 'whiskey'],
-  'eating disorders / body dysmorphia behaviors': ['eating disorder', 'anorexia', 'bulimia', 'body image', 'vomit'],
+  'active drug use / needle depiction':  ['uses drugs', 'drug use', 'drugged', 'needles', 'addiction', 'overdose', 'heroin', 'cocaine'],
+  'alcoholism / heavy drinking':         ['alcohol', 'drunk', 'drinking'],
+  'eating disorders / body dysmorphia behaviors': ['eating disorder', 'body dysmorphia', 'anorex', 'bulimi'],
   // Common Phobias
-  'bugs / insects (spiders, snakes, etc.)': ['spider', 'snake', 'insect', 'bug', 'worm', 'rodent', 'rat', 'mouse'],
-  'claustrophobia (being trapped, buried alive)': ['claustro', 'trap', 'buried', 'confined', 'enclosed'],
-  'vomiting / emetophobia':              ['vomit', 'puke', 'sick', 'nausea'],
-  'medical settings (hospitals, needles, surgeries)': ['hospital', 'needle', 'surgery', 'medical', 'doctor', 'blood'],
+  'bugs / insects (spiders, snakes, etc.)': ['spider', 'snake', 'insect', 'bug', 'worm', 'rodent', 'rats', 'mice'],
+  'claustrophobia (being trapped, buried alive)': ['claustro', 'trapped', 'buried', 'confined'],
+  'vomiting / emetophobia':              ['vomit', 'puke', 'nausea'],
+  'medical settings (hospitals, needles, surgeries)': ['hospital', 'needles', 'surgery', 'medical', 'doctor'],
   // Loss & Grief — phrased to match DDD topic names ("a parent dies", "a kid dies", …)
   'death of a parent':                   ['parent dies'],
   'death of a child':                    ['kid dies', 'child dies'],
@@ -500,8 +503,10 @@ async function rateForUserUncounted(movie, triggers, userProfile, feedbackHistor
       'You haven\'t told us what to look out for yet, so we can\'t say whether this is safe for you. Set up your sensitivity profile to get a personal rating.');
   }
   if (!triggers || triggers.length === 0) {
-    return insufficientDataRating('no_data',
-      'We couldn\'t find any community content data for this title, so we can\'t confirm it\'s safe. Please check other sources before watching.');
+    const isNew = movie?.release_date && daysSinceRelease(movie) < 60;
+    return insufficientDataRating('no_data', isNew
+      ? 'This film only came out recently, so the community hasn\'t reported on its content yet. We can\'t confirm it\'s safe — check back in a few weeks or look at other sources.'
+      : 'We couldn\'t find any community content data for this title, so we can\'t confirm it\'s safe. Please check other sources before watching.');
   }
 
   const coverage = assessCoverage(triggers, labels);
@@ -843,6 +848,12 @@ app.delete('/api/watchlist/:id', verifyAuth, async (req, res) => {
 
 const RECOMMENDATION_MAX_AGE_MS = 1000 * 60 * 60 * 24; // 24 hours
 const RECOMMENDATION_COUNT = 5;
+// Trending lists are full of films out for days, which the community hasn't
+// reported on yet — every one would come back INSUFFICIENT_DATA. Skip those
+// up front (no API cost), and bound how many candidates one refresh may rate.
+const MIN_DAYS_SINCE_RELEASE = 21;
+const RECOMMENDATION_MAX_CANDIDATES = 10;
+const daysSinceRelease = m => (Date.now() - new Date(m.release_date).getTime()) / 864e5;
 
 // NEW: home dashboard recommendations. Pulls TMDb's trending list and rates
 // a handful of them for this user. Slow the first time (each unrated movie
@@ -863,7 +874,9 @@ app.get('/api/recommendations', verifyAuth, async (req, res) => {
       const trendingRes = await axios.get(
         `https://api.themoviedb.org/3/trending/movie/week?api_key=${TMDB_API_KEY}`
       );
-      candidates = (trendingRes.data.results || []).filter(m => !m.adult).slice(0, RECOMMENDATION_COUNT);
+      candidates = (trendingRes.data.results || [])
+        .filter(m => !m.adult && m.release_date && daysSinceRelease(m) >= MIN_DAYS_SINCE_RELEASE)
+        .slice(0, RECOMMENDATION_MAX_CANDIDATES);
     } catch (_) {
       // Fallback popular IDs if trending fails
       candidates = [{ id: 1022789 }, { id: 346698 }, { id: 354912 }, { id: 27205 }, { id: 8587 }];
@@ -875,11 +888,14 @@ app.get('/api/recommendations', verifyAuth, async (req, res) => {
 
     const results = [];
     for (const c of candidates) {
+      if (results.length >= RECOMMENDATION_COUNT) break;
       try {
         const movie = await getTmdbMovie(c.id);
         await cacheMovieSummary(c.id, movie);
         const triggers = await getTriggers(c.id);
         const rating = await rateForUser(movie, triggers, userProfile, feedbackHistory);
+        // A "recommended for you" row shouldn't be a list of "we don't know".
+        if (rating.rating === 'INSUFFICIENT_DATA') continue;
         results.push({ movie, triggers, rating });
       } catch (err) {
         console.warn(`[recommendations] Could not rate candidate movie ${c.id}:`, err.message);
@@ -926,13 +942,12 @@ function triggerFlagged(t) {
 
 const COLLECTION_RULES = {
   'no-animal':  /animal|dog/i,
-  'gore-free':  /gore|graphic violence|dismember|mutilat/i,
+  'gore-free':  /gore|graphic violence|dismember|mutilat|amputation/i,
   'anxiety':    /panic attack|jump scare|claustrophob/i,
-  'family':     /sex|nudity|drug use|alcohol|gore|graphic violence|abuse|rape/i,
-  // Rough proxy only (absence of alcohol/drug/sex/nudity triggers) — not a
-  // substitute for real religious-content review. Flag this to whoever owns
-  // that collection before treating it as authoritative.
-  'muslim':     /alcohol|drinking|drug use|sex scene|nudity/i,
+  'family':     /sex|nud|uses drugs|drug use|alcohol|gore|graphic violence|abuse|rape/i,
+  // Shown as "No Alcohol, Drugs or Nudity". Patterns match DDD's actual
+  // topic names ("someone uses drugs", "there are nude scenes", …).
+  'muslim':     /alcohol|drunk|drinking|uses drugs|drug use|sexual content|nude|nudity/i,
 };
 
 // Building collections reads every cached movie, so serve a recent copy.

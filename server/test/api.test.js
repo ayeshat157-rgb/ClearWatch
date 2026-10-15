@@ -45,6 +45,7 @@ function groqJson(obj) {
 // axios.get: routed through fake TMDb / DDD responses.
 const axios = require('axios');
 const MOVIES = {
+  110: { id: 110, title: 'Out Last Week', release_date: new Date(Date.now() - 5 * 864e5).toISOString().slice(0, 10), overview: '', poster_path: null, runtime: 90, vote_average: 6, genres: [] },
   103: { id: 103, title: 'Unknown Movie', release_date: '2021-01-01', overview: '?', poster_path: null, runtime: 80, vote_average: 5, genres: [] },
   104: { id: 104, title: 'Api Movie', release_date: '2018-06-08', overview: '', poster_path: null, runtime: 127, vote_average: 7, genres: [] },
   108: { id: 108, title: 'Weak Evidence Movie', release_date: '2015-01-01', overview: '', poster_path: null, runtime: 95, vote_average: 6, genres: [] },
@@ -54,6 +55,7 @@ const MOVIES = {
   102: { id: 102, title: 'Dog Movie', release_date: '2019-05-05', overview: 'Sad.', poster_path: '/b.jpg', runtime: 100, vote_average: 6, genres: [] },
 };
 let tmdbFail = null;
+let trendingIds = [101, 102];
 let dddFail = null;
 const axiosCalls = [];
 axios.get = async (url, config = {}) => {
@@ -66,7 +68,7 @@ axios.get = async (url, config = {}) => {
     const q = u.searchParams.get('query').toLowerCase();
     return { data: { results: Object.values(MOVIES).filter(m => m.title.toLowerCase().includes(q)) } };
   }
-  if (u.pathname === '/3/trending/movie/week') return { data: { results: [MOVIES[101], MOVIES[102]] } };
+  if (u.pathname === '/3/trending/movie/week') return { data: { results: trendingIds.map(id => MOVIES[id]) } };
   let m = u.pathname.match(/^\/3\/movie\/(\d+)\/recommendations$/);
   if (m) return { data: { results: [MOVIES[101]] } };
   m = u.pathname.match(/^\/3\/movie\/(\d+)$/);
@@ -812,4 +814,33 @@ test('metrics: hidden without the admin token, counts outcomes with it', async (
     assert.ok(after.http['2xx'] > 0);
     assert.equal(typeof after.insufficientShare, 'number');
   } finally { delete process.env.ADMIN_TOKEN; }
+});
+
+test('keyword map matches DDD topic wording without over-matching', () => {
+  const all = ['someone gets gaslighted', 'alcohol abuse', 'animals are abused', "there's domestic violence",
+    'a minority is misrepresented', "there's child abuse", 'sexual assault on men is a joke', 'there are nude scenes',
+    'someone vomits', 'someone has an eating disorder'].map(topic => ({ topic }));
+  const pick = label => filterTriggersToUserProfile(all, [label]).map(t => t.topic);
+  assert.deepEqual(pick('Relationship manipulation'), ['someone gets gaslighted']);
+  assert.deepEqual(pick('Domestic violence / abuse'), ["there's domestic violence"]);
+  assert.deepEqual(pick('child abuse or neglect'), ["there's child abuse"]);
+  assert.deepEqual(pick('Sexual content & nudity'), ['there are nude scenes']);
+  assert.deepEqual(pick('Eating disorders / body dysmorphia behaviors'), ['someone has an eating disorder']);
+});
+
+test('recommendations: skip brand-new releases and titles we can\'t vouch for', async () => {
+  const uid = 'rec-new';
+  await api('POST', '/api/profile', { uid, body: { profile: ANIMAL } });
+  trendingIds = [110, 103, 101, 102]; // 110 out 5 days ago; 103 has no DDD data
+  try {
+    const r = await api('GET', '/api/recommendations', { uid });
+    assert.deepEqual(r.body.movies.map(m => m.movie.id), [101, 102]);
+    assert.ok(!axiosCalls.some(u => u.includes('/3/movie/110')), 'too-new title not even fetched');
+  } finally { trendingIds = [101, 102]; }
+});
+
+test('rate: a recent release with no data says so plainly', async () => {
+  const r = await api('POST', '/api/movies/110/rate', { uid: 'new1', body: { userProfile: ANIMAL } });
+  assert.equal(r.body.rating.rating, 'INSUFFICIENT_DATA');
+  assert.match(r.body.rating.explanation, /came out recently/);
 });
