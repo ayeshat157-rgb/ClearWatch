@@ -68,6 +68,13 @@ function cleanList(list, maxItems = 40, maxChars = 100) {
 }
 
 const app = express();
+// Behind Render's proxy every request arrives from the proxy's IP, which
+// would make the per-IP limit one bucket shared by all users. Trust exactly
+// N hops so req.ip is the client — trusting all hops would let a client
+// spoof X-Forwarded-For to dodge the limit.
+if (process.env.TRUST_PROXY_HOPS || process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS) || 1);
+}
 
 // Auth is a Bearer token (no cookies), so CORS is about keeping other sites
 // from using the API, not CSRF. Set FRONTEND_URL (comma-separated) in prod.

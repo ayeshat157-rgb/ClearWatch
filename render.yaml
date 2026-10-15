@@ -1,0 +1,34 @@
+# Render Blueprint — must live at the repo root.
+# Dashboard → New → Blueprint → pick this repo. Values marked `sync: false`
+# are asked for once in the dashboard and never stored in git.
+services:
+  - type: web
+    name: clearwatch-api
+    runtime: node
+    rootDir: server
+    plan: free            # sleeps after ~15 min idle; first request then takes ~1 min
+    buildCommand: npm ci --omit=dev
+    startCommand: node index.js
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TMDB_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: DDD_API_KEY
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_CLIENT_EMAIL
+        sync: false
+      - key: FIREBASE_PRIVATE_KEY
+        sync: false
+      # Your Vercel URL, e.g. https://clearwatch.vercel.app — set after the
+      # frontend is deployed. Until then the API accepts any origin (with a warning).
+      - key: FRONTEND_URL
+        sync: false
+      # Random secret for GET /api/admin/metrics (X-Admin-Token header).
+      - key: ADMIN_TOKEN
+        generateValue: true
