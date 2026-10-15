@@ -202,7 +202,7 @@ const COLLECTIONS = [
 const TRIGGER_CATS = [
   {
     id: "violence", label: "Violence & Physical Harm", emoji: "⚔️",
-    items: ["Domestic violence / abuse", "Self-harm or suicide", "Graphic gore / dismemberment", "Animal cruelty or death"]
+    items: ["Domestic violence / abuse", "Child abuse or neglect", "Self-harm or suicide", "Graphic gore / dismemberment", "Animal cruelty or death"]
   },
   {
     id: "sexual", label: "Sexual & Interpersonal Trauma", emoji: "💔",
@@ -1082,7 +1082,7 @@ function OnboardingFlow({ onComplete, initialProfile }: {
                 <div className="space-y-3">
                   {[
                     { id: "Flashing lights / strobe effects", label: "Flashing lights & strobe effects", sub: "Crucial for epilepsy and photosensitive migraines" },
-                    { id: "Shaky camera / intense color contrast", label: "Shaky camera & high color contrast", sub: "Helps avoid motion sickness and visual overwhelm" },
+                    { id: "Shaky camera", label: "Shaky camera", sub: "Helps avoid motion sickness from handheld or shaky footage" },
                     { id: "__none__", label: "No visual sensitivities", sub: "Skip visual filters" },
                   ].map(opt => {
                     const on = visual.has(opt.id);

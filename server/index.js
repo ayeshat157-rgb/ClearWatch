@@ -157,16 +157,26 @@ function logDddError(what, err) {
 
 // TMDb ID → DDD item ID. The lookup can also return TV shows or other media
 // sharing the same number, so match on both type and tmdbId.
-async function getDDDId(tmdbId) {
+// DDD sometimes has duplicate entries for one film (Encanto: an empty
+// 855471 and the real 146253), so return every Movie match, oldest first.
+async function getDDDIds(tmdbId) {
   try {
     const items = await dddGet(`/items?tmdb=${encodeURIComponent(tmdbId)}`);
-    const match = (items || []).find(i => i.itemTypeName === 'Movie' && String(i.tmdbId) === String(tmdbId));
-    return match?.id || null;
+    return (items || [])
+      .filter(i => i.itemTypeName === 'Movie' && String(i.tmdbId) === String(tmdbId))
+      .map(i => i.id)
+      .sort((a, b) => a - b);
   } catch (err) {
     logDddError(`lookup for TMDb ${tmdbId}`, err);
-    return null;
+    return [];
   }
 }
+
+async function getDDDId(tmdbId) {
+  return (await getDDDIds(tmdbId))[0] || null;
+}
+
+const totalVotes = triggers => triggers.reduce((sum, t) => sum + triggerYesCount(t) + triggerNoCount(t), 0);
 
 // Topic stats for a DDD item, in the { topic, yes, no } shape the rest of the
 // pipeline uses. topicId marks rows as coming from the API.
@@ -200,9 +210,14 @@ async function getTriggers(tmdbId, { uid } = {}) {
     metrics.lookupBudgetExhausted++;
     throw e;
   }
-  const dddId = await getDDDId(tmdbId);
-  if (!dddId) return [];
-  const triggers = await fetchDDDTriggers(dddId);
+  const ids = await getDDDIds(tmdbId);
+  if (!ids.length) return [];
+  // With duplicates, keep the entry the community actually voted on.
+  let triggers = [];
+  for (const id of ids.slice(0, 3)) {
+    const candidate = await fetchDDDTriggers(id);
+    if (totalVotes(candidate) > totalVotes(triggers)) triggers = candidate;
+  }
   if (triggers.length > 0) await saveCachedTriggers(tmdbId, triggers);
   return triggers;
 }
@@ -308,7 +323,7 @@ const TRIGGER_KEYWORD_MAP = {
   'terminal illness / cancer':           ['cancer', 'terminally ill'],
   // Visual / audio (passed through from profileText already, but kept here for future use)
   'flashing lights / strobe effects':    ['flash', 'strobe', 'epilep', 'seizure'],
-  'shaky camera / intense color contrast': ['shaky', 'camera', 'motion sick', 'handheld'],
+  'shaky camera':                        ['shaky', 'handheld', 'motion sick'],
   'sudden, high-volume jump scares / loud noises': ['jump scare', 'jumpscare', 'loud', 'startle'],
   'misophonia triggers (e.g., chewing, whispering, scratching sounds)': ['chewing', 'whisper', 'scratch', 'misophonia'],
   'high-pitched frequencies or screaming': ['scream', 'high-pitch', 'shriek'],
@@ -318,6 +333,7 @@ const TRIGGER_KEYWORD_MAP = {
 const LEGACY_LABELS = {
   'domestic abuse': 'domestic violence / abuse',
   'screaming (extended or intense)': 'high-pitched frequencies or screaming',
+  'shaky camera / intense color contrast': 'shaky camera',
 };
 // Placeholder answers that aren't sensitivities at all.
 const NOT_A_SENSITIVITY = new Set(['no preference', 'none', '__none__', 'no visual sensitivities', 'no audio sensitivities', 'n/a']);
@@ -388,7 +404,7 @@ const MIN_VOTES_FOR_COVERAGE = 3;
 
 // Bump whenever rating logic changes, so cached ratings from older logic
 // (e.g. GREEN-on-no-data) are regenerated instead of served.
-const RATING_LOGIC_VERSION = 9; // 9: curated topic-ID map (topicMap.json)
+const RATING_LOGIC_VERSION = 10; // 10: topic map review decisions
 
 // Kids Mode means these must be *verified* absent before a title can be GREEN.
 const KIDS_MODE_LABELS = [
@@ -1113,7 +1129,30 @@ app.delete('/api/account', verifyAuth, async (req, res) => {
 // movies from general knowledge — it looks up actual TMDb/DDD data and
 // runs the same rating pipeline as everywhere else in the app.
 
-async function checkMovieSafetyTool(title, userProfile, uid) {
+// Every category the assistant can report on (aliases excluded).
+const CHAT_CATEGORIES = Object.entries(require('./topicMap.json').categories)
+  .filter(([, entry]) => !entry.sameAs)
+  .map(([label]) => label);
+
+const STATUS_WORDS = { confirmed: 'confirmed', mixed: 'mixed reports', clear: 'not reported', unverified: 'not enough data' };
+
+// Status of any categories the user asked about — including ones outside
+// their profile — using the same topic map and evidence rules as ratings.
+function categoryReport(triggers, categories, profileLabels = []) {
+  const asked = [...new Set((categories || []).map(c => String(c).toLowerCase()))]
+    .filter(c => mapEntryFor(c)).slice(0, 10);
+  if (!asked.length) return null;
+  if (!triggers.length) return Object.fromEntries(asked.map(c => [c, { status: STATUS_WORDS.unverified, inUsersProfile: profileLabels.some(l => l.toLowerCase() === c) }]));
+  const cov = assessCoverage(triggers, asked);
+  const mine = new Set(profileLabels.map(l => l.toLowerCase()));
+  const report = {};
+  for (const key of ['confirmed', 'mixed', 'clear', 'unverified']) {
+    for (const c of cov[key]) report[c] = { status: STATUS_WORDS[key], inUsersProfile: mine.has(c) };
+  }
+  return report;
+}
+
+async function checkMovieSafetyTool(title, userProfile, uid, categories = []) {
   const searchRes = await axios.get(
     `https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&include_adult=false&query=${encodeURIComponent(title)}`
   );
@@ -1134,7 +1173,7 @@ async function checkMovieSafetyTool(title, userProfile, uid) {
     if (rating.reason !== 'no_data') await saveCachedRating(uid, match.id, profileHash, rating);
   }
 
-  return { found: true, movie, triggers, rating };
+  return { found: true, movie, triggers, rating, categories: categoryReport(triggers, categories, sensitivityLabels(userProfile)) };
 }
 
 async function findSimilarMoviesTool(title) {
@@ -1161,7 +1200,14 @@ const CHAT_TOOLS = [
       description: "Look up a specific movie's real, confirmed content triggers and generate this user's personalized safety rating for it. Use this whenever the user asks about a named title, e.g. 'Is there animal death in Inception?' or 'Is Encanto safe for my kid?'. Never answer questions like this from general knowledge — always call this tool.",
       parameters: {
         type: 'object',
-        properties: { title: { type: 'string', description: 'The movie or show title' } },
+        properties: {
+          title: { type: 'string', description: 'The movie or show title' },
+          categories: {
+            type: 'array',
+            description: "Optional: content categories the user asked about, including ones outside their profile (e.g. they ask 'does it have alcohol?' → ['alcoholism / heavy drinking']). Each comes back as confirmed / mixed reports / not reported / not enough data.",
+            items: { type: 'string', enum: CHAT_CATEGORIES },
+          },
+        },
         required: ['title'],
       },
     },
@@ -1216,6 +1262,8 @@ ${spoilerRule}
 
 ${noSceneData}
 
+The user can ask about ANY content category, not only the ones in their profile (e.g. "does it have alcohol?", "any jump scares?", "is there blood?"). Pass those as \`categories\` to check_movie_safety and report each one's status in plain words: confirmed, mixed reports (some people report it, not confirmed), not reported, or not enough data. Each result says inUsersProfile: when false, present it as general information — never say it relates to or matches their profile, and it doesn't change their personal rating. Never answer them from your own knowledge.
+
 Keep answers to 2-4 sentences and warm.`;
 
     const convo = [{ role: 'system', content: systemPrompt }, ...windowedMessages];
@@ -1250,7 +1298,7 @@ Keep answers to 2-4 sentences and warm.`;
         let compactForModel;
         try {
           if (call.function.name === 'check_movie_safety') {
-            const result = await checkMovieSafetyTool(args.title, userProfile, req.uid);
+            const result = await checkMovieSafetyTool(args.title, userProfile, req.uid, args.categories);
             if (result.found) {
               ratedMovies.push({ movie: result.movie, triggers: result.triggers, rating: result.rating });
               // Compact summary only — NOT the full triggers array or full TMDb
@@ -1266,6 +1314,7 @@ Keep answers to 2-4 sentences and warm.`;
                 confirmedCategories: result.rating.coverage?.confirmed,
                 unverifiedCategories: result.rating.coverage?.unverified,
                 specifics_onlyIfAsked: { details: result.rating.details, topTriggers: result.rating.topTriggers },
+                ...(result.categories ? { askedCategories: result.categories } : {}),
               };
             } else {
               compactForModel = result;

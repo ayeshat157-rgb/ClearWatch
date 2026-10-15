@@ -46,6 +46,7 @@ function groqJson(obj) {
 const axios = require('axios');
 const MOVIES = {
   111: { id: 111, title: 'Split Vote Mystery', release_date: '2026-06-30', overview: '', poster_path: null, runtime: 109, vote_average: 7, genres: [] },
+  114: { id: 114, title: 'Duplicate Entry Movie', release_date: '2021-11-24', overview: '', poster_path: null, runtime: 102, vote_average: 7, genres: [] },
   110: { id: 110, title: 'Out Last Week', release_date: new Date(Date.now() - 5 * 864e5).toISOString().slice(0, 10), overview: '', poster_path: null, runtime: 90, vote_average: 6, genres: [] },
   103: { id: 103, title: 'Unknown Movie', release_date: '2021-01-01', overview: '?', poster_path: null, runtime: 80, vote_average: 5, genres: [] },
   104: { id: 104, title: 'Api Movie', release_date: '2018-06-08', overview: '', poster_path: null, runtime: 127, vote_average: 7, genres: [] },
@@ -84,6 +85,11 @@ axios.get = async (url, config = {}) => {
       // Same number shared by a TV show — must pick the Movie
       return { data: [{ id: 1, itemTypeName: 'TV Show', tmdbId: 104 }, { id: 9999, itemTypeName: 'Movie', tmdbId: 104 }], headers: {} };
     }
+    if (u.pathname === '/api/v3/items' && tmdb === '114') {
+      // Like Encanto: an empty duplicate entry listed before the real one
+      return { data: [{ id: 9999, itemTypeName: 'Movie', tmdbId: 114 }, { id: 8888, itemTypeName: 'Movie', tmdbId: 114 }], headers: {} };
+    }
+    if (u.pathname === '/api/v3/items/8888') return { data: { id: 8888, topicItemStats: [] }, headers: {} };
     if (u.pathname === '/api/v3/items') return { data: [], headers: {} };
     if (u.pathname === '/api/v3/items/9999') {
       return { data: { id: 9999, name: 'Api Movie', topicItemStats: [
@@ -971,4 +977,55 @@ test('topic map: older DDD topics missing from the catalogue still count', async
   groqHandler = async () => groqJson({ rating: 'YELLOW', explanation: 'x', topTriggers: [], matchPct: 50 });
   const { assessCoverage } = require('../index');
   assert.deepEqual(assessCoverage([{ topicId: 160, topic: 'the mom dies', yes: '40', no: '2' }], ['Death of a parent']).confirmed, ['Death of a parent']);
+});
+
+test('topic map review decisions are in force', () => {
+  const { topicRole } = require('../index');
+  // Hangings no longer count as self-harm (the topic includes executions)
+  assert.equal(topicRole({ topicId: 227, topic: 'there are hangings' }, 'Self-harm or suicide'), null);
+  // Fictional creatures count, but only as minor (related)
+  assert.equal(topicRole({ topicId: 196, topic: 'a dragon dies' }, 'Animal cruelty or death'), 'related');
+  // Sexual assault is minor (related) for sexual content, core for assault references
+  assert.equal(topicRole({ topicId: 182, topic: 'someone is sexually assaulted' }, 'Sexual content & nudity'), 'related');
+  assert.equal(topicRole({ topicId: 182, topic: 'someone is sexually assaulted' }, 'Sexual assault references'), 'core');
+  // Needles stay related for drugs
+  assert.equal(topicRole({ topicId: 190, topic: 'needles/syringes are used' }, 'Active drug use / needle depiction'), 'related');
+  // Colour contrast removed: new label and the old label both mean shaky cam
+  assert.equal(topicRole({ topicId: 181, topic: 'shaky cam is used' }, 'Shaky camera'), 'core');
+  assert.equal(topicRole({ topicId: 181, topic: 'shaky cam is used' }, 'Shaky camera / intense color contrast'), 'core');
+  // Child abuse is a real onboarding category
+  assert.equal(topicRole({ topicId: 218, topic: "there's child abuse" }, 'Child abuse or neglect'), 'core');
+});
+
+test('chat: can report categories outside the user\'s profile', async () => {
+  let toolResult;
+  groqHandler = async (args) => {
+    if (args.response_format) return groqJson({ rating: 'RED', explanation: 'x', topTriggers: [], matchPct: 10 });
+    const toolMsg = args.messages.find(m => m.role === 'tool');
+    if (!toolMsg) {
+      // The category list offered to the model is the real one
+      const params = args.tools.find(t => t.function.name === 'check_movie_safety').function.parameters;
+      assert.ok(params.properties.categories.items.enum.includes('alcoholism / heavy drinking'));
+      return { choices: [{ message: { role: 'assistant', content: null, tool_calls: [{ id: 't1', type: 'function', function: {
+        name: 'check_movie_safety', arguments: JSON.stringify({ title: 'Dog Movie', categories: ['alcoholism / heavy drinking', 'blood or gore', 'not a real category'] }),
+      } }] } }] };
+    }
+    toolResult = JSON.parse(toolMsg.content);
+    return { choices: [{ message: { role: 'assistant', content: 'done' } }] };
+  };
+  await api('POST', '/api/profile', { uid: 'cc1', body: { profile: ANIMAL } });
+  const r = await api('POST', '/api/chat', { uid: 'cc1', body: { message: 'Does Dog Movie have alcohol or blood?' } });
+  assert.equal(r.status, 200);
+  assert.deepEqual(toolResult.askedCategories, {
+    'blood or gore': { status: 'confirmed', inUsersProfile: false },               // "Is there gore" 40 yes / 2 no
+    'alcoholism / heavy drinking': { status: 'not reported', inUsersProfile: false }, // 1 yes / 30 no
+  });
+  assert.match(groqCalls[0].messages[0].content, /ANY content category/);
+});
+
+test('duplicate DDD entries: use the one people actually voted on', async () => {
+  // 8888 (older id, listed second) is empty; 9999 has the votes
+  const r = await api('POST', '/api/movies/114/rate', { uid: 'dup1', body: { userProfile: ANIMAL } });
+  assert.equal(r.status, 200);
+  assert.ok(r.body.triggers.some(t => t.topic === 'a dog dies'), 'used the entry with votes');
 });

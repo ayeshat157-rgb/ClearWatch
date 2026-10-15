@@ -32,7 +32,7 @@ Then edit `topicMap.json` (move/add/remove IDs) and set `"reviewed": true` for t
 - `350` an animal is abandoned
 - `355` an animal is sad
 
-> Review: should a fictional creature (dragon, 196) or 'non-human character' (305) count at all? Bugs are deliberately excluded (they're a phobia category).
+> Decided: fictional creatures (dragon 196) and non-human characters (305) count as minor (related) — they can flag 'mixed reports' but never confirm. Bugs are excluded (phobia category).
 
 ## ☐ domestic violence / abuse
 
@@ -57,11 +57,10 @@ Then edit `topicMap.json` (move/add/remove IDs) and set `"reviewed": true` for t
 - `199` someone self harms
 - `286` Someone attempts suicide *(older topic, not in catalogue)*
 
-**Related** (2)
-- `227` there are hangings
+**Related** (1)
 - `259` someone says "I'll kill myself" *(older topic, not in catalogue)*
 
-> Review: 'there are hangings' (227) includes executions; kept as related.
+> Decided: hangings (227) removed — the topic includes executions.
 
 ## ☐ graphic gore / dismemberment
 
@@ -83,7 +82,7 @@ Then edit `topicMap.json` (move/add/remove IDs) and set `"reviewed": true` for t
 - `255` There's audio gore
 - `322` someone is eaten
 
-> 'there's blood/gore' (188) is deliberately NOT here: it covers any blood. It's in 'blood or gore' (used by Kids Mode).
+> Decided: 'there's blood/gore' (188) stays out — it covers any blood. It's in 'blood or gore' (Kids Mode).
 
 ## ☐ blood or gore
 
@@ -106,13 +105,17 @@ Then edit `topicMap.json` (move/add/remove IDs) and set `"reviewed": true` for t
 - `279` there are nude scenes
 - `412` someone masturbates
 
-**Related** (4)
+**Related** (8)
+- `182` someone is sexually assaulted
 - `236` there are incestuous relationships
 - `276` someone is sexually objectified
+- `292` someone is sexually assaulted onscreen *(older topic, not in catalogue)*
 - `317` someone loses their virginity
+- `326` sexual assault is mentioned *(older topic, not in catalogue)*
 - `364` there's BDSM
+- `411` there's dubious consent or sexual coercion
 
-> Sexual assault topics live in 'sexual assault references', not here.
+> Decided: sexual assault topics are minor (related) here — they flag 'mixed reports' for this category; they're core in 'sexual assault references'.
 
 ## ☐ sexual assault references
 
@@ -164,7 +167,7 @@ Then edit `topicMap.json` (move/add/remove IDs) and set `"reviewed": true` for t
 - `299` someone is drugged
 - `439` there's addiction stigma
 
-> Review: should needles (190) be core here? It also covers medical injections.
+> Decided: needles (190) stay related — the topic also covers medical injections.
 
 ## ☐ alcoholism / heavy drinking
 
@@ -282,7 +285,7 @@ Then edit `topicMap.json` (move/add/remove IDs) and set `"reviewed": true` for t
 **Related** (1)
 - `206` someone has a seizure
 
-## ☐ shaky camera / intense color contrast
+## ☐ shaky camera
 
 **Core** (1)
 - `181` shaky cam is used
@@ -290,7 +293,7 @@ Then edit `topicMap.json` (move/add/remove IDs) and set `"reviewed": true` for t
 **Related** (0)
 - *(none)*
 
-> DDD has no topic for intense color contrast — only shaky cam is checked.
+> Decided: colour contrast removed (no DDD topic). Old profiles saying 'Shaky camera / intense color contrast' map here.
 
 ## ☐ sudden, high-volume jump scares / loud noises
 
@@ -334,7 +337,7 @@ Then edit `topicMap.json` (move/add/remove IDs) and set `"reviewed": true` for t
 - `401` there's corporal punishment
 - `425` a child gets lost
 
-> Legacy category (not in current onboarding) — also used by Kids Mode.
+> Onboarding option (Violence & Physical Harm); also used by Kids Mode.
 
 ## ☐ sexual assault or non-consensual content
 
@@ -346,6 +349,6 @@ Same lists as **relationship manipulation** (Legacy label.).
 
 ## Unassigned topics
 
-162 DDD topics aren't in any category. Most are intentional (e.g. "the ending is sad"), but scan for anything a category should include.
+163 DDD topics aren't in any category. Most are intentional (e.g. "the ending is sad"), but scan for anything a category should include.
 
-`429` a building collapses · `184` a car crashes · `253` A child's dear toy is destroyed · `380` a corpse is shown · `430` a disability is demonized · `460` a disability is miraculously cured · `422` a disabled person dies · `328` a major character dies · `273` a male character is ridiculed for crying · `263` a mentally ill person is violent · `294` a minority is misrepresented · `208` a person is hit by a car · `465` a personality disorder is demonized · `198` a plane crashes · `329` a priceless artifact is destroyed · `359` a trans person is depicted predatorily · `390` an animal attacks someone · `389` an elderly person dies · `194` an LGBT person dies · `368` an LGBT+ person is outed · `349` autism is misrepresented · `248` Autism specific abuse · `302` D.I.D. Misrepresentation · `391` diabetes is mocked or misrepresented · `341` existentialism is debated · `384` family members argue · `352` hands are damaged · `434` it ends on a cliffhanger · `428` mental illness is stigmatized or mocked · `334` reality is unstable or unhinged · `351` religion is discussed · `209` Santa (et al) is spoiled · `437` scars are shown or discussed · `309` somebody is choked · `387` someone accidentally kills a loved one · `298` Someone becomes unconscious · `216` someone breaks a bone · `354` someone defecates · `311` someone dies · `353` someone disabled played by able-bodied · `362` someone dislocates something · `191` someone drowns · `441` someone fakes a disability · `271` someone falls down stairs · `211` someone falls to their death · `375` someone has a heart attack · `348` someone has a meltdown · `336` someone has a mental illness · `278` someone has a stroke · `414` someone has agoraphobia · `415` someone has amnesia or memory loss · `420` someone has an allergic reaction · `235` someone has an anxiety attack · `291` someone has dementia/Alzheimer's · `321` someone is beaten up by a bully · `469` someone is called a "good boy" or "good girl" · `443` someone is called a hypochondriac · `282` someone is crushed to death · `438` someone is executed · `406` someone is harmed by acid · `457` someone is hit by a train · `270` someone is homeless · `243` someone is kidnapped · `226` someone is misgendered · `440` someone is mocked or persecuted for their religion · `224` someone is possessed · `388` someone is robbed or mugged · `343` someone is stabbed · `363` someone leaves without saying goodbye · `445` someone loses their job · `289` someone sacrifices themselves · `251` someone says the n-word · `464` someone smokes or vapes · `455` someone speaks backwards · `212` someone speaks hate speech · `467` someone steps on a nail · `265` someone suffers from PTSD · `423` someone telling the truth is not believed · `257` someone wets/soils themselves · `210` teeth are damaged · `234` the black guy dies first · `222` the ending is sad · `268` the fourth wall is broken · `272` the r-slur is used · `448` there are "emo" jokes · `262` there are "Man in a dress" jokes · `283` there are 9/11 depictions · `382` there are adoption or foster care themes · `456` there are aliens · `174` there are clowns · `394` there are dolls or puppets · `444` there are glitches or technology errors · `247` there are homophobic slurs · `295` there are mannequins · `393` there are mass casualties · `419` there are Nazis or swastikas · `297` there are razors · `337` there are sharks · `176` there are shower scenes · `314` there are transphobic slurs · `397` there are zombies · `266` there is a baby or unborn child · `373` there is a tsunami · `256` there is copaganda · `290` there is obscene language/gestures · `418` there's a breakup or divorce · `424` there's a countdown or time pressure · `421` there's a cult · `386` there's a fire · `408` there's a funeral or cemetery scene · `450` there's a home invasion · `277` there's a large age gap · `221` there's a nuclear explosion · `451` there's a scene with extreme heights · `323` there's ABA therapy · `244` there's ableist language or behavior · `280` there's Achilles Tendon injury · `332` there's an alligator or crocodile · `399` there's an apocalypse or end of the world · `316` there's anti-abortion themes · `426` there's anti-Indigenous racism · `246` there's antisemitism · `303` there's Aphobia · `371` there's audience participation · `385` there's biphobia or bi erasure · `325` there's blackface · `306` there's body dysphoria · `228` there's childbirth · `459` there's climate change · `398` there's conversion therapy · `396` there's COVID-19 · `442` there's cultural appropriation · `310` there's deadnaming or birthnaming · `369` there's demons or Hell · `370` there's dissociation, depersonalization, or derealization · `346` there's end credits scenes? · `377` there's entrances from audience · `470` there's environmental destruction · `466` there's facial distortion · `324` there's farting · `376` there's flying onstage · `449` there's gender essentialism · `405` there's genocide · `207` there's ghosts · `232` there's gun violence · `345` there's incarceration · `402` there's Islamophobia · `378` there's live gunfire · `358` there's menstruation · `335` there's natural bodies of water · `427` there's police brutality · `468` there's prejudice against children or teens · `458` there's queerbaiting · `417` there's religious abuse · `381` there's secondhand embarrassment · `177` there's shaving/cutting · `436` there's slavery · `372` there's smoke or haze · `180` there's spitting · `356` there's underwater scenes · `431` there's war · `392` women are portrayed as incompetent
+`429` a building collapses · `184` a car crashes · `253` A child's dear toy is destroyed · `380` a corpse is shown · `430` a disability is demonized · `460` a disability is miraculously cured · `422` a disabled person dies · `328` a major character dies · `273` a male character is ridiculed for crying · `263` a mentally ill person is violent · `294` a minority is misrepresented · `208` a person is hit by a car · `465` a personality disorder is demonized · `198` a plane crashes · `329` a priceless artifact is destroyed · `359` a trans person is depicted predatorily · `390` an animal attacks someone · `389` an elderly person dies · `194` an LGBT person dies · `368` an LGBT+ person is outed · `349` autism is misrepresented · `248` Autism specific abuse · `302` D.I.D. Misrepresentation · `391` diabetes is mocked or misrepresented · `341` existentialism is debated · `384` family members argue · `352` hands are damaged · `434` it ends on a cliffhanger · `428` mental illness is stigmatized or mocked · `334` reality is unstable or unhinged · `351` religion is discussed · `209` Santa (et al) is spoiled · `437` scars are shown or discussed · `309` somebody is choked · `387` someone accidentally kills a loved one · `298` Someone becomes unconscious · `216` someone breaks a bone · `354` someone defecates · `311` someone dies · `353` someone disabled played by able-bodied · `362` someone dislocates something · `191` someone drowns · `441` someone fakes a disability · `271` someone falls down stairs · `211` someone falls to their death · `375` someone has a heart attack · `348` someone has a meltdown · `336` someone has a mental illness · `278` someone has a stroke · `414` someone has agoraphobia · `415` someone has amnesia or memory loss · `420` someone has an allergic reaction · `235` someone has an anxiety attack · `291` someone has dementia/Alzheimer's · `321` someone is beaten up by a bully · `469` someone is called a "good boy" or "good girl" · `443` someone is called a hypochondriac · `282` someone is crushed to death · `438` someone is executed · `406` someone is harmed by acid · `457` someone is hit by a train · `270` someone is homeless · `243` someone is kidnapped · `226` someone is misgendered · `440` someone is mocked or persecuted for their religion · `224` someone is possessed · `388` someone is robbed or mugged · `343` someone is stabbed · `363` someone leaves without saying goodbye · `445` someone loses their job · `289` someone sacrifices themselves · `251` someone says the n-word · `464` someone smokes or vapes · `455` someone speaks backwards · `212` someone speaks hate speech · `467` someone steps on a nail · `265` someone suffers from PTSD · `423` someone telling the truth is not believed · `257` someone wets/soils themselves · `210` teeth are damaged · `234` the black guy dies first · `222` the ending is sad · `268` the fourth wall is broken · `272` the r-slur is used · `448` there are "emo" jokes · `262` there are "Man in a dress" jokes · `283` there are 9/11 depictions · `382` there are adoption or foster care themes · `456` there are aliens · `174` there are clowns · `394` there are dolls or puppets · `444` there are glitches or technology errors · `227` there are hangings · `247` there are homophobic slurs · `295` there are mannequins · `393` there are mass casualties · `419` there are Nazis or swastikas · `297` there are razors · `337` there are sharks · `176` there are shower scenes · `314` there are transphobic slurs · `397` there are zombies · `266` there is a baby or unborn child · `373` there is a tsunami · `256` there is copaganda · `290` there is obscene language/gestures · `418` there's a breakup or divorce · `424` there's a countdown or time pressure · `421` there's a cult · `386` there's a fire · `408` there's a funeral or cemetery scene · `450` there's a home invasion · `277` there's a large age gap · `221` there's a nuclear explosion · `451` there's a scene with extreme heights · `323` there's ABA therapy · `244` there's ableist language or behavior · `280` there's Achilles Tendon injury · `332` there's an alligator or crocodile · `399` there's an apocalypse or end of the world · `316` there's anti-abortion themes · `426` there's anti-Indigenous racism · `246` there's antisemitism · `303` there's Aphobia · `371` there's audience participation · `385` there's biphobia or bi erasure · `325` there's blackface · `306` there's body dysphoria · `228` there's childbirth · `459` there's climate change · `398` there's conversion therapy · `396` there's COVID-19 · `442` there's cultural appropriation · `310` there's deadnaming or birthnaming · `369` there's demons or Hell · `370` there's dissociation, depersonalization, or derealization · `346` there's end credits scenes? · `377` there's entrances from audience · `470` there's environmental destruction · `466` there's facial distortion · `324` there's farting · `376` there's flying onstage · `449` there's gender essentialism · `405` there's genocide · `207` there's ghosts · `232` there's gun violence · `345` there's incarceration · `402` there's Islamophobia · `378` there's live gunfire · `358` there's menstruation · `335` there's natural bodies of water · `427` there's police brutality · `468` there's prejudice against children or teens · `458` there's queerbaiting · `417` there's religious abuse · `381` there's secondhand embarrassment · `177` there's shaving/cutting · `436` there's slavery · `372` there's smoke or haze · `180` there's spitting · `356` there's underwater scenes · `431` there's war · `392` women are portrayed as incompetent
