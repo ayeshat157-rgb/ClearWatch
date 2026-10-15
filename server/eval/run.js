@@ -34,6 +34,7 @@ const cases = labels.cases.filter(c => c.verified || includeUnverified);
 // Outcome of the evidence pipeline for one category.
 function predict(coverage, label) {
   if (coverage.confirmed.includes(label)) return 'present';
+  if (coverage.mixed?.includes(label)) return 'mixed';
   if (coverage.clear.includes(label)) return 'absent';
   return 'unknown';
 }
@@ -41,10 +42,12 @@ function predict(coverage, label) {
 function classify(expected, predicted) {
   if (expected === 'present') {
     if (predicted === 'present') return 'caught';
+    if (predicted === 'mixed') return 'caught_weak';     // warned as "mixed reports"
     if (predicted === 'absent') return 'DANGEROUS_MISS'; // told them it's not there
     return 'safe_miss';                                   // said "not enough data"
   }
   if (predicted === 'present') return 'false_alarm';
+  if (predicted === 'mixed') return 'mixed_alarm';      // a softer false alarm
   if (predicted === 'absent') return 'correct_clear';
   return 'unknown_clear';
 }
@@ -92,11 +95,13 @@ async function main() {
     unverifiedIncluded: rows.filter(r => !r.verified).length,
     present, absent,
     caught: count('caught'),
+    caughtWeak: count('caught_weak'),
+    mixedAlarms: count('mixed_alarm'),
     dangerousMisses: count('DANGEROUS_MISS'),
     safeMisses: count('safe_miss'),
     falseAlarms: count('false_alarm'),
     falseNegativeRate: pct(count('DANGEROUS_MISS'), present),
-    recall: pct(count('caught'), present),
+    recall: pct(count('caught') + count('caught_weak'), present),
     falseAlarmRate: pct(count('false_alarm'), absent),
     ...(withAi ? { productMisses: rows.filter(r => r.productMiss).length } : {}),
   };
@@ -112,9 +117,9 @@ async function main() {
     '| Metric | Value |', '|---|---|',
     `| Cases | ${summary.cases} (${present} present, ${absent} absent) |`,
     `| **False-negative rate** (present, but told "not reported") | **${summary.falseNegativeRate}** (${summary.dangerousMisses}) |`,
-    `| Recall (present and caught) | ${summary.recall} |`,
+    `| Recall (present and warned: confirmed or mixed) | ${summary.recall} (${summary.caughtWeak} as mixed) |`,
     `| Safe misses (present, "not enough data") | ${summary.safeMisses} |`,
-    `| False alarms | ${summary.falseAlarmRate} (${summary.falseAlarms}) |`,
+    `| False alarms | ${summary.falseAlarmRate} (${summary.falseAlarms}), plus ${summary.mixedAlarms} "mixed reports" on absent cases |`,
     ...(withAi ? [`| Product misses (present but rated GREEN) | ${summary.productMisses} |`] : []),
     '', '| Outcome | Movie | Category | Expected | Got | Evidence |', '|---|---|---|---|---|---|',
     ...rows.map(r => `| ${r.outcome} | ${r.title} | ${r.category} | ${r.expected} | ${r.predicted}${r.aiRating ? ` (AI: ${r.aiRating})` : ''} | ${r.evidence} |`),

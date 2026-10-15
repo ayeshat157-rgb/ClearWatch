@@ -107,7 +107,9 @@ const firstDoc = async (uid, name) => (await userCol(uid, name).get()).docs[0]?.
 const exists = async (colName, id) => (await fakeDb.collection(colName).doc(id).get()).exists;
 
 // Rows from the DDD API carry a topicId; seed in that shape.
-const seed = (id, rows) => saveCachedTriggers(id, rows.map((r, i) => ({ verified: null, topicId: i + 1, ...r })));
+// topicId null = no real DDD ID, so matching falls back to keywords; pass a
+// real ID (e.g. 153 "a dog dies") to exercise the curated topic map.
+const seed = (id, rows) => saveCachedTriggers(id, rows.map(r => ({ verified: null, topicId: null, ...r })));
 
 let server, base;
 before(async () => {
@@ -877,7 +879,7 @@ test('mixed: a 3–3 split is "mixed reports", not confirmed; no nudity votes �
 test('mixed: a single unopposed vote is too thin to confirm', async () => {
   await seed('112', [{ topic: 'a dog dies', yes: '1', no: '0' }]);
   const { assessCoverage } = require('../index');
-  const cov = assessCoverage([{ topic: 'a dog dies', yes: '1', no: '0', topicId: 1 }], ['Animal cruelty or death']);
+  const cov = assessCoverage([{ topic: 'a dog dies', yes: '1', no: '0', topicId: 153 }], ['Animal cruelty or death']);
   assert.deepEqual(cov.mixed, ['Animal cruelty or death']);
   assert.deepEqual(cov.confirmed, []);
 });
@@ -920,4 +922,53 @@ test('recommendations made for an old profile are not served even if the cache s
   const { saveProfile } = require('../database');
   await saveProfile(uid, { triggers: ['Alcoholism / heavy drinking'] });
   assert.equal((await api('GET', '/api/recommendations', { uid })).body.cached, false);
+});
+
+// ─── Curated topic map (real DDD topic IDs) ────────────────────────────────
+test('topic map: matches by ID, so wording no longer matters', () => {
+  const { topicRole } = require('../index');
+  assert.equal(topicRole({ topicId: 153, topic: 'renamed by DDD tomorrow' }, 'Animal cruelty or death'), 'core');
+  assert.equal(topicRole({ topicId: 355, topic: 'an animal is sad' }, 'Animal cruelty or death'), 'related');
+  // "alcohol abuse" is not domestic violence, whatever words it shares
+  assert.equal(topicRole({ topicId: 225, topic: 'alcohol abuse' }, 'Domestic violence / abuse'), null);
+  // Legacy labels resolve through the map too
+  assert.equal(topicRole({ topicId: 219, topic: "there's domestic violence" }, 'Domestic abuse'), 'core');
+});
+
+test('topic map: Enola Holmes 3 with real IDs — no false "confirmed"', () => {
+  const { assessCoverage } = require('../index');
+  const enola = [
+    { topicId: 197, topic: 'there is sexual content', yes: '3', no: '3' },
+    { topicId: 279, topic: 'there are nude scenes', yes: '0', no: '6' },
+    { topicId: 188, topic: "there's blood/gore", yes: '5', no: '1' },
+    { topicId: 267, topic: "there's excessive gore", yes: '0', no: '6' },
+  ];
+  const cov = assessCoverage(enola, ['Sexual content & nudity', 'Graphic gore / dismemberment', 'blood or gore']);
+  assert.deepEqual(cov.mixed, ['Sexual content & nudity']);
+  assert.deepEqual(cov.clear, ['Graphic gore / dismemberment']);   // excessive gore 0/6; blood isn't "graphic"
+  assert.deepEqual(cov.confirmed, ['blood or gore']);              // Kids Mode still sees the blood
+});
+
+test('topic map: related topics can raise a flag but never confirm', () => {
+  const { assessCoverage } = require('../index');
+  const cov = assessCoverage([
+    { topicId: 342, topic: 'a woman gets slapped', yes: '10', no: '0' },
+    { topicId: 219, topic: "there's domestic violence", yes: '0', no: '10' },
+  ], ['Domestic violence / abuse']);
+  assert.deepEqual(cov.mixed, ['Domestic violence / abuse']);
+  assert.deepEqual(cov.confirmed, []);
+});
+
+test('topic map: related topics can never clear a category', () => {
+  const { assessCoverage } = require('../index');
+  const cov = assessCoverage([{ topicId: 313, topic: 'a family member dies', yes: '0', no: '40' }], ['Death of a parent']);
+  assert.deepEqual(cov.unverified, ['Death of a parent']);
+});
+
+test('topic map: older DDD topics missing from the catalogue still count', async () => {
+  // 160 "the mom dies" isn't in /api/v3/topics any more but carries votes
+  await seed('113', [{ topicId: 160, topic: 'the mom dies', yes: '40', no: '2' }]);
+  groqHandler = async () => groqJson({ rating: 'YELLOW', explanation: 'x', topTriggers: [], matchPct: 50 });
+  const { assessCoverage } = require('../index');
+  assert.deepEqual(assessCoverage([{ topicId: 160, topic: 'the mom dies', yes: '40', no: '2' }], ['Death of a parent']).confirmed, ['Death of a parent']);
 });

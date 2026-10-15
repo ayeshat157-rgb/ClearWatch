@@ -1,0 +1,216 @@
+{
+  "_readme": "Which DoesTheDogDie topics count for each ClearWatch category, by DDD topic ID (stable; names can change). CORE topics are the category itself: a majority yes confirms it, enough 'no' votes clear it. RELATED topics only hint at it: reports make the category 'mixed' at most, and they can never clear it. Review each category, fix the lists, then set reviewed: true. Regenerate the readable sheet with `npm run topicmap:report`. Topic catalogue: GET https://www.doesthedogdie.com/api/v3/topics (some older topics, e.g. 267 excessive gore, still carry votes but are missing from it).",
+  "version": 1,
+  "categories": {
+    "animal cruelty or death": {
+      "reviewed": false,
+      "core": {
+        "153": "a dog dies", "186": "a cat dies", "183": "a horse dies", "285": "a pet dies", "189": "an animal dies",
+        "252": "there's a dead animal", "229": "animals are abused", "231": "there's animal fighting",
+        "338": "rabbits are harmed", "435": "an animal is hit by a vehicle"
+      },
+      "related": {
+        "350": "an animal is abandoned", "355": "an animal is sad", "319": "animals were harmed in the making",
+        "196": "a dragon dies", "305": "a non-human character dies"
+      },
+      "notes": "Review: should a fictional creature (dragon, 196) or 'non-human character' (305) count at all? Bugs are deliberately excluded (they're a phobia category)."
+    },
+    "domestic violence / abuse": {
+      "reviewed": false,
+      "core": { "219": "there's domestic violence", "403": "there's emotional or verbal abuse", "365": "someone is abused with a belt" },
+      "related": {
+        "342": "a woman gets slapped", "330": "there's abusive parents", "462": "it's told from an abuser's point of view",
+        "304": "the abused becomes the abuser", "347": "the abused forgives their abuser", "367": "a woman is brutalized for spectacle",
+        "447": "there's elder abuse"
+      },
+      "notes": ""
+    },
+    "self-harm or suicide": {
+      "reviewed": false,
+      "core": { "199": "someone self harms", "187": "there's suicide", "286": "Someone attempts suicide" },
+      "related": { "259": "someone says \"I'll kill myself\"", "227": "there are hangings" },
+      "notes": "Review: 'there are hangings' (227) includes executions; kept as related."
+    },
+    "graphic gore / dismemberment": {
+      "reviewed": false,
+      "core": {
+        "267": "there's excessive gore", "250": "there's amputation", "331": "there's decapitation", "296": "there's body horror",
+        "171": "there's finger/toe mutilation", "200": "there's eye mutilation", "361": "someone's throat is mutilated",
+        "258": "there's genital trauma/mutilation", "223": "heads get squashed"
+      },
+      "related": {
+        "254": "there's cannibalism", "203": "there's torture", "164": "someone is burned alive", "322": "someone is eaten",
+        "255": "There's audio gore"
+      },
+      "notes": "'there's blood/gore' (188) is deliberately NOT here: it covers any blood. It's in 'blood or gore' (used by Kids Mode)."
+    },
+    "blood or gore": {
+      "reviewed": false,
+      "core": { "188": "there's blood/gore", "267": "there's excessive gore", "255": "There's audio gore" },
+      "related": { "296": "there's body horror", "250": "there's amputation", "331": "there's decapitation" },
+      "notes": "Used by Kids Mode only (not an onboarding option)."
+    },
+    "sexual content & nudity": {
+      "reviewed": false,
+      "core": { "197": "there is sexual content", "279": "there are nude scenes", "412": "someone masturbates" },
+      "related": {
+        "317": "someone loses their virginity", "364": "there's BDSM", "276": "someone is sexually objectified",
+        "236": "there are incestuous relationships"
+      },
+      "notes": "Sexual assault topics live in 'sexual assault references', not here."
+    },
+    "sexual assault references": {
+      "reviewed": false,
+      "core": {
+        "182": "someone is sexually assaulted", "292": "someone is sexually assaulted onscreen", "326": "sexual assault is mentioned",
+        "411": "there's dubious consent or sexual coercion", "320": "there's pedophilia", "461": "a rape victim is not believed",
+        "315": "sexual assault on men is a joke"
+      },
+      "related": { "287": "a minor is sexualized", "407": "there's human trafficking", "307": "there's bestiality" },
+      "notes": ""
+    },
+    "relationship manipulation": {
+      "reviewed": false,
+      "core": { "237": "someone gets gaslighted", "403": "there's emotional or verbal abuse" },
+      "related": {
+        "416": "someone is brainwashed or mind controlled", "242": "someone is stalked",
+        "411": "there's dubious consent or sexual coercion", "318": "someone is watched without knowing"
+      },
+      "notes": ""
+    },
+    "infidelity storylines": {
+      "reviewed": false,
+      "core": { "241": "someone cheats", "301": "there's bisexual cheating" },
+      "related": { "413": "someone is betrayed" },
+      "notes": ""
+    },
+    "active drug use / needle depiction": {
+      "reviewed": false,
+      "core": { "193": "someone uses drugs", "275": "someone overdoses", "446": "someone has a bad trip" },
+      "related": {
+        "190": "needles/syringes are used", "230": "there's addiction", "299": "someone is drugged", "439": "there's addiction stigma"
+      },
+      "notes": "Review: should needles (190) be core here? It also covers medical injections."
+    },
+    "alcoholism / heavy drinking": {
+      "reviewed": false,
+      "core": { "225": "alcohol abuse" },
+      "related": { "230": "there's addiction" },
+      "notes": "DDD has no topic for ordinary/social drinking — only 'alcohol abuse'. A film with casual drinking can come out 'not reported'."
+    },
+    "eating disorders / body dysmorphia behaviors": {
+      "reviewed": false,
+      "core": { "217": "someone has an eating disorder", "195": "there's body dysmorphia" },
+      "related": { "233": "there's fat jokes", "300": "there's fat suits" },
+      "notes": ""
+    },
+    "bugs / insects (spiders, snakes, etc.)": {
+      "reviewed": false,
+      "core": {
+        "213": "there are bugs", "165": "there are spiders", "214": "there are snakes", "432": "there are cockroaches",
+        "357": "there's bedbugs", "409": "there are rats or mice", "400": "a bug is killed"
+      },
+      "related": { "312": "trypophobic content is shown" },
+      "notes": ""
+    },
+    "claustrophobia (being trapped, buried alive)": {
+      "reviewed": false,
+      "core": { "202": "there's a claustrophobic scene", "240": "someone is buried alive" },
+      "related": {
+        "274": "someone is restrained", "360": "someone's mouth is covered", "245": "someone struggles to breathe",
+        "308": "someone is held under water", "281": "someone asphyxiates"
+      },
+      "notes": ""
+    },
+    "vomiting / emetophobia": {
+      "reviewed": false,
+      "core": { "201": "someone vomits" },
+      "related": {},
+      "notes": ""
+    },
+    "medical settings (hospitals, needles, surgeries)": {
+      "reviewed": false,
+      "core": {
+        "192": "there's a hospital scene", "454": "there's surgery or a medical procedure", "190": "needles/syringes are used",
+        "404": "CPR is performed", "205": "electro-therapy is used", "395": "there's involuntary medical treatment"
+      },
+      "related": {
+        "220": "there's a mental institution scene", "463": "there's a dentist scene", "453": "someone performs surgery on themselves"
+      },
+      "notes": ""
+    },
+    "death of a parent": {
+      "reviewed": false,
+      "core": { "168": "a parent dies", "160": "the mom dies" },
+      "related": { "313": "a family member dies" },
+      "notes": ""
+    },
+    "death of a child": {
+      "reviewed": false,
+      "core": { "158": "a kid dies" },
+      "related": {},
+      "notes": ""
+    },
+    "pregnancy loss (miscarriage, stillbirth)": {
+      "reviewed": false,
+      "core": { "215": "someone miscarries", "264": "a baby is stillborn", "239": "a pregnant person dies" },
+      "related": { "238": "someone has an abortion" },
+      "notes": "Review: is abortion (238) right as related for this category?"
+    },
+    "terminal illness / cancer": {
+      "reviewed": false,
+      "core": { "204": "someone has cancer", "327": "someone is terminally ill" },
+      "related": { "288": "someone has a chronic illness" },
+      "notes": ""
+    },
+    "flashing lights / strobe effects": {
+      "reviewed": false,
+      "core": { "167": "there's flashing lights or images" },
+      "related": { "206": "someone has a seizure" },
+      "notes": ""
+    },
+    "shaky camera / intense color contrast": {
+      "reviewed": false,
+      "core": { "181": "shaky cam is used" },
+      "related": {},
+      "notes": "DDD has no topic for intense color contrast — only shaky cam is checked."
+    },
+    "sudden, high-volume jump scares / loud noises": {
+      "reviewed": false,
+      "core": { "161": "there are jump scares", "339": "there are sudden loud noises" },
+      "related": { "383": "there are sirens or alarms", "269": "a car honks or tires screech" },
+      "notes": ""
+    },
+    "misophonia triggers (e.g., chewing, whispering, scratching sounds)": {
+      "reviewed": false,
+      "core": { "260": "there's misophonia" },
+      "related": { "433": "there are repetitive sounds" },
+      "notes": ""
+    },
+    "high-pitched frequencies or screaming": {
+      "reviewed": false,
+      "core": { "410": "there are high-pitched noises", "366": "there's screaming" },
+      "related": { "261": "a baby cries" },
+      "notes": ""
+    },
+    "child abuse or neglect": {
+      "reviewed": false,
+      "core": {
+        "218": "there's child abuse", "330": "there's abusive parents", "293": "a child is abandoned by a parent or guardian",
+        "287": "a minor is sexualized", "320": "there's pedophilia", "452": "a teacher abuses a student"
+      },
+      "related": { "401": "there's corporal punishment", "425": "a child gets lost", "284": "an infant is abducted" },
+      "notes": "Legacy category (not in current onboarding) — also used by Kids Mode."
+    },
+    "sexual assault or non-consensual content": {
+      "reviewed": false,
+      "sameAs": "sexual assault references",
+      "notes": "Legacy label."
+    },
+    "emotional abuse or gaslighting": {
+      "reviewed": false,
+      "sameAs": "relationship manipulation",
+      "notes": "Legacy label."
+    }
+  }
+}

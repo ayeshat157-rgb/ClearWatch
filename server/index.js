@@ -327,6 +327,40 @@ function keywordsFor(label) {
   return TRIGGER_KEYWORD_MAP[key] || TRIGGER_KEYWORD_MAP[LEGACY_LABELS[key]] || [key];
 }
 
+// ─── Curated topic map (topicMap.json) ───────────────────────────────────
+// Category → exact DDD topic IDs, split into CORE (the category itself) and
+// RELATED (hints only). Human-reviewed; this replaces keyword guessing for
+// any row that carries a DDD topicId. Keywords remain only as a fallback
+// for rows without IDs.
+const TOPIC_MAP = (() => {
+  const { categories } = require('./topicMap.json');
+  const map = new Map();
+  for (const [label, entry] of Object.entries(categories)) {
+    const src = entry.sameAs ? categories[entry.sameAs] : entry;
+    map.set(label, {
+      core: new Set(Object.keys(src.core || {}).map(Number)),
+      related: new Set(Object.keys(src.related || {}).map(Number)),
+    });
+  }
+  return map;
+})();
+
+function mapEntryFor(label) {
+  const key = label.toLowerCase();
+  return TOPIC_MAP.get(key) || TOPIC_MAP.get(LEGACY_LABELS[key]) || null;
+}
+
+// 'core' | 'related' | null — how topic t bears on a category.
+function topicRole(t, label) {
+  const entry = mapEntryFor(label);
+  if (entry && t.topicId != null) {
+    const id = Number(t.topicId);
+    return entry.core.has(id) ? 'core' : entry.related.has(id) ? 'related' : null;
+  }
+  // No topic ID (or unmapped category): fall back to keyword matching.
+  return keywordsFor(label).some(kw => topicMatchesKeyword(t.topic || '', kw)) ? 'core' : null;
+}
+
 // Keyword must start a word: "cat" matches "cats" but not "dedicated",
 // "rat" matches "rats" but not "pirate".
 function topicMatchesKeyword(topic, kw) {
@@ -343,16 +377,7 @@ function topicMatchesKeyword(topic, kw) {
 function filterTriggersToUserProfile(allTriggers, selectedTriggers) {
   if (!selectedTriggers || selectedTriggers.length === 0) return allTriggers;
 
-  // Build a flat set of lowercase keywords the user cares about
-  const wantedKeywords = new Set();
-  for (const sel of selectedTriggers) keywordsFor(sel).forEach(k => wantedKeywords.add(k.toLowerCase()));
-
-  return allTriggers.filter(t => {
-    for (const kw of wantedKeywords) {
-      if (topicMatchesKeyword(t.topic || '', kw)) return true;
-    }
-    return false;
-  });
+  return allTriggers.filter(t => selectedTriggers.some(sel => topicRole(t, sel)));
 }
 
 // ─── Evidence coverage ───────────────────────────────────────────────────
@@ -363,7 +388,7 @@ const MIN_VOTES_FOR_COVERAGE = 3;
 
 // Bump whenever rating logic changes, so cached ratings from older logic
 // (e.g. GREEN-on-no-data) are regenerated instead of served.
-const RATING_LOGIC_VERSION = 8; // 8: mixed-reports state, majority to confirm, graphic gore
+const RATING_LOGIC_VERSION = 9; // 9: curated topic-ID map (topicMap.json)
 
 // Kids Mode means these must be *verified* absent before a title can be GREEN.
 const KIDS_MODE_LABELS = [
@@ -406,18 +431,21 @@ function assessCoverage(allTriggers, labels) {
   const summarize = t => ({ topic: t.topic, yes: triggerYesCount(t), no: triggerNoCount(t) });
   const byVotes = (a, b) => (triggerYesCount(b) + triggerNoCount(b)) - (triggerYesCount(a) + triggerNoCount(a));
   for (const label of labels) {
-    const kws = keywordsFor(label);
-    const matches = allTriggers.filter(t => kws.some(kw => topicMatchesKeyword(t.topic || '', kw)));
-    const hits = matches.filter(isConfirmed);
+    const core = allTriggers.filter(t => topicRole(t, label) === 'core');
+    const related = allTriggers.filter(t => topicRole(t, label) === 'related');
+    const byYes = (a, b) => triggerYesCount(b) - triggerYesCount(a);
+    const hits = core.filter(isConfirmed);
+    // Related topics can only raise a flag ("mixed"), never confirm or clear.
+    const hints = [...core.filter(isMixed), ...related.filter(t => isConfirmed(t) || isMixed(t))];
     if (hits.length) {
       confirmed.push(label);
-      evidence[label] = hits.sort((a, b) => triggerYesCount(b) - triggerYesCount(a)).slice(0, 3).map(summarize);
-    } else if (matches.some(isMixed)) {
+      evidence[label] = hits.sort(byYes).slice(0, 3).map(summarize);
+    } else if (hints.length) {
       mixed.push(label);
-      evidence[label] = matches.filter(isMixed).sort((a, b) => triggerYesCount(b) - triggerYesCount(a)).slice(0, 3).map(summarize);
-    } else if (matches.some(t => hasEvidence(t, MIN_VOTES_FOR_COVERAGE))) {
+      evidence[label] = hints.sort(byYes).slice(0, 3).map(summarize);
+    } else if (core.some(t => hasEvidence(t, MIN_VOTES_FOR_COVERAGE))) {
       clear.push(label);
-      evidence[label] = matches.filter(t => hasEvidence(t, MIN_VOTES_FOR_COVERAGE)).sort(byVotes).slice(0, 2).map(summarize);
+      evidence[label] = core.filter(t => hasEvidence(t, MIN_VOTES_FOR_COVERAGE)).sort(byVotes).slice(0, 2).map(summarize);
     } else {
       unverified.push(label);
     }
@@ -466,9 +494,8 @@ function isStronglyConfirmed(t) {
 function strongConfirmations(allTriggers, labels) {
   const out = [];
   for (const label of labels) {
-    const kws = keywordsFor(label);
     const best = allTriggers
-      .filter(t => kws.some(kw => topicMatchesKeyword(t.topic || '', kw)) && isStronglyConfirmed(t))
+      .filter(t => topicRole(t, label) === 'core' && isStronglyConfirmed(t))
       .sort((a, b) => triggerYesCount(b) - triggerYesCount(a))[0];
     if (best) out.push({ label, topic: best.topic, yes: triggerYesCount(best), no: triggerNoCount(best) });
   }
@@ -1376,7 +1403,7 @@ if (require.main === module) {
   setInterval(() => console.log('[metrics]', JSON.stringify(metricsSnapshot())), 60 * 60 * 1000).unref();
 }
 
-module.exports = { app, profileToText, filterTriggersToUserProfile, hashProfile, getTriggers, generateRating, getDDDId, LIMITS, assessCoverage, rateForUser };
+module.exports = { app, profileToText, filterTriggersToUserProfile, hashProfile, getTriggers, generateRating, getDDDId, LIMITS, assessCoverage, rateForUser, topicRole };
 
 // Prevent a single unhandled promise rejection from crashing the whole server.
 process.on('unhandledRejection', (reason) => {
