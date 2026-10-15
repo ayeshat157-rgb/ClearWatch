@@ -2319,8 +2319,9 @@ function NotificationPanel({
 
 // ─── App Shell ────────────────────────────────────────────────────────────────
 
-function AppShell({ userName, userProfile, darkMode, onToggleDark, onLogout, onUpdateProfile, onEditProfile, onRetakeOnboarding }: {
+function AppShell({ userName, userProfile, profileRevision, darkMode, onToggleDark, onLogout, onUpdateProfile, onEditProfile, onRetakeOnboarding }: {
   userName: string; userProfile: UserProfile | null; darkMode: boolean; onToggleDark: () => void; onLogout: () => void;
+  profileRevision: number; // bumps when settings changes are saved → reload recommendations
   onUpdateProfile: (patch: Partial<UserProfile>) => void;
   onEditProfile: () => void;
   onRetakeOnboarding: () => void;
@@ -2378,18 +2379,12 @@ function AppShell({ userName, userProfile, darkMode, onToggleDark, onLogout, onU
   // for 24h, so this is instant except the first time each day).
   useEffect(() => {
     apiGetRecommendations()
-      .then(results => {
-        if (results && results.length > 0) {
-          setHomeMovies(results.map(rateResponseToMovie));
-        } else {
-          setHomeMovies(MOVIES);
-        }
-      })
-      .catch(() => {
-        setHomeMovies(MOVIES);
-      })
+      // No fallback to the demo MOVIES list: those ratings weren't made for
+      // this user, and showing them as recommendations would be made-up.
+      .then(results => setHomeMovies((results ?? []).map(rateResponseToMovie)))
+      .catch(() => setHomeMovies([]))
       .finally(() => setHomeLoading(false));
-  }, []);
+  }, [profileRevision]);
 
   // Load the real saved watchlist once when the app opens
   useEffect(() => {
@@ -2561,12 +2556,14 @@ function AppShell({ userName, userProfile, darkMode, onToggleDark, onLogout, onU
         <NotificationPanel
           onClose={() => setNotifOpen(false)}
           onOpenMovie={(movieId, title) => {
-            const found = homeMovies.find(m => m.id === String(movieId)) || MOVIES.find(m => m.id === String(movieId) || m.title.toLowerCase() === title?.toLowerCase());
+            // Only real ratings: an already-rated pick, or rate it now. Never
+            // the demo MOVIES list, whose ratings weren't made for this user.
+            const found = homeMovies.find(m => m.id === String(movieId));
             if (found) {
               openMovieDetail(found);
-            } else {
+            } else if (Number(movieId)) {
               handleSelectResult({
-                id: Number(movieId) || 1022789,
+                id: Number(movieId),
                 title: title || "Movie",
                 release_date: "2024-01-01",
                 poster_path: null,
@@ -2606,6 +2603,7 @@ export default function App() {
   // Debounced: dragging the strictness slider fires a change per tick, which
   // used to send dozens of saves (and trip the server's write limit).
   const profileRef = useRef<UserProfile | null>(null);
+  const [profileRevision, setProfileRevision] = useState(0);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => { profileRef.current = userProfile; }, [userProfile]);
   function updateProfile(patch: Partial<UserProfile>) {
@@ -2614,7 +2612,9 @@ export default function App() {
     setUserProfile(next);
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      saveProfile(next).catch(() => { /* not fatal — still applied this session */ });
+      saveProfile(next)
+        .then(() => setProfileRevision(r => r + 1)) // Home re-fetches picks for the new settings
+        .catch(() => { /* not fatal — still applied this session */ });
     }, 600);
   }
 
@@ -2642,18 +2642,20 @@ export default function App() {
       {view === "onboarding" && (
         <OnboardingFlow
           initialProfile={editingProfile ? userProfile : null}
-          onComplete={(name, profile) => {
+          onComplete={async (name, profile) => {
             setUserName(name);
             setUserProfile(profile);
-            setView("app");
+            // Wait for the save so Home asks for recommendations with the
+            // *new* answers — otherwise it can race and get the old ones.
+            try { await saveProfile(profile); } catch { /* not fatal — profile still works this session */ }
             setEditingProfile(false);
-            saveProfile(profile).catch(() => { /* not fatal — profile still works this session */ });
+            setView("app");
           }}
         />
       )}
       {view === "app" && (
         <AppShell
-          userName={userName} userProfile={userProfile} darkMode={darkMode}
+          userName={userName} userProfile={userProfile} profileRevision={profileRevision} darkMode={darkMode}
           onToggleDark={() => setDarkMode(v => !v)}
           onLogout={() => { logOut().catch(() => { }); setView("landing"); }}
           onUpdateProfile={updateProfile}

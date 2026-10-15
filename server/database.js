@@ -86,8 +86,14 @@ async function getRecommendations(uid) {
   return snap.exists ? snap.data() : null;
 }
 
-async function saveRecommendations(uid, movies) {
-  await privateDoc(uid, 'recommendations').set({ generatedAt: now(), movies });
+// profileHash records which profile these were made for, so a changed
+// profile (e.g. retaking the questionnaire) never gets someone else's picks.
+async function saveRecommendations(uid, movies, profileHash = null) {
+  await privateDoc(uid, 'recommendations').set({ generatedAt: now(), movies, profileHash });
+}
+
+async function clearRecommendations(uid) {
+  await privateDoc(uid, 'recommendations').delete();
 }
 
 // ─── Movie summaries + collections ───────────────────────────────────────
@@ -224,7 +230,7 @@ module.exports = {
   getCachedTriggers, saveCachedTriggers,
   getProfile, saveProfile,
   getWatchlist, addToWatchlist, removeFromWatchlist,
-  getRecommendations, saveRecommendations,
+  getRecommendations, saveRecommendations, clearRecommendations,
   cacheMovieSummary, getAllCachedEntries,
   getCachedRating, saveCachedRating,
   addTriggerReport, deleteUserData,

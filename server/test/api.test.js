@@ -896,3 +896,28 @@ test('legacy labels map to current categories; placeholder answers are ignored',
   assert.deepEqual(cov.clear.sort(), ['Domestic abuse', 'Screaming (extended or intense)']);
   assert.ok(![...cov.confirmed, ...cov.mixed, ...cov.clear, ...cov.unverified].includes('No preference'));
 });
+
+test('recommendations start over when the profile changes', async () => {
+  const uid = 'rec-reset';
+  await api('POST', '/api/profile', { uid, body: { profile: ANIMAL } });
+  const first = await api('GET', '/api/recommendations', { uid });
+  assert.equal(first.body.cached, false);
+  assert.equal((await api('GET', '/api/recommendations', { uid })).body.cached, true);
+
+  // Retaking the questionnaire saves a new profile → old picks are discarded
+  await api('POST', '/api/profile', { uid, body: { profile: { triggers: ['Alcoholism / heavy drinking'] } } });
+  const after = await api('GET', '/api/recommendations', { uid });
+  assert.equal(after.body.cached, false);
+  assert.ok(after.body.movies.every(m => m.rating.coverage.clear.includes('Alcoholism / heavy drinking') || m.rating.coverage.confirmed.length || m.rating.coverage.mixed.length));
+  assert.ok(after.body.movies.every(m => !JSON.stringify(m.rating.coverage).includes('Animal cruelty')));
+});
+
+test('recommendations made for an old profile are not served even if the cache survived', async () => {
+  const uid = 'rec-hash';
+  await api('POST', '/api/profile', { uid, body: { profile: ANIMAL } });
+  await api('GET', '/api/recommendations', { uid });
+  // Change the stored profile without going through POST /api/profile
+  const { saveProfile } = require('../database');
+  await saveProfile(uid, { triggers: ['Alcoholism / heavy drinking'] });
+  assert.equal((await api('GET', '/api/recommendations', { uid })).body.cached, false);
+});

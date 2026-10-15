@@ -11,7 +11,7 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const Groq = require('groq-sdk');
-const { getCachedTriggers, saveCachedTriggers, getProfile, saveProfile, getWatchlist, addToWatchlist, removeFromWatchlist, getRecommendations, saveRecommendations, cacheMovieSummary, getAllCachedEntries, getCachedRating, saveCachedRating, addTriggerReport, deleteUserData, addRatingFeedback, getUserRatingFeedback, getChatHistory, saveChatHistory, clearChatHistory, getNotifications, addNotification, markNotificationsRead, getUnreadNotificationCount, recordConsent, exportUserData } = require('./database');
+const { getCachedTriggers, saveCachedTriggers, getProfile, saveProfile, getWatchlist, addToWatchlist, removeFromWatchlist, getRecommendations, saveRecommendations, clearRecommendations, cacheMovieSummary, getAllCachedEntries, getCachedRating, saveCachedRating, addTriggerReport, deleteUserData, addRatingFeedback, getUserRatingFeedback, getChatHistory, saveChatHistory, clearChatHistory, getNotifications, addNotification, markNotificationsRead, getUnreadNotificationCount, recordConsent, exportUserData } = require('./database');
 const verifyAuth = require('./verifyAuth');
 const { slidingWindowLimiter, dailyBudget } = require('./rateLimit');
 const crypto = require('crypto');
@@ -821,6 +821,8 @@ app.get('/api/profile', verifyAuth, async (req, res) => {
 app.post('/api/profile', verifyAuth, writeLimiter, async (req, res) => {
   try {
     await saveProfile(req.uid, req.body.profile);
+    // New answers → start recommendations over rather than show old picks.
+    await clearRecommendations(req.uid);
     // Notify: profile updated — but only once until it's read, not per save.
     try {
       const pending = (await getNotifications(req.uid)).some(n => n.type === 'profile_update' && !n.read);
@@ -895,14 +897,16 @@ const daysSinceRelease = m => (Date.now() - new Date(m.release_date).getTime()) 
 // needs DDD API calls) — cached afterward so it's instant on repeat visits.
 app.get('/api/recommendations', verifyAuth, async (req, res) => {
   try {
+    const userProfile = await getProfile(req.uid);
+    const feedbackHistory = await getUserRatingFeedback(req.uid);
+    const profileHash = hashProfile(profileToText(userProfile), feedbackHistory);
+
     const cached = await getRecommendations(req.uid);
     const isFresh = cached && cached.movies && cached.movies.length > 0 &&
+      cached.profileHash === profileHash && // made for *this* profile
       (Date.now() - new Date(cached.generatedAt).getTime()) < RECOMMENDATION_MAX_AGE_MS &&
       cached.movies.every(m => m.rating?.version === RATING_LOGIC_VERSION);
     if (isFresh) return res.json({ movies: cached.movies, cached: true });
-
-    const userProfile = await getProfile(req.uid);
-    const feedbackHistory = await getUserRatingFeedback(req.uid);
 
     let candidates = [];
     try {
@@ -938,7 +942,7 @@ app.get('/api/recommendations', verifyAuth, async (req, res) => {
     }
 
     if (results.length > 0) {
-      await saveRecommendations(req.uid, results);
+      await saveRecommendations(req.uid, results, profileHash);
 
       // Generate notifications for new safe picks
       const safePicks = results.filter(r => r.rating?.rating === 'GREEN');
