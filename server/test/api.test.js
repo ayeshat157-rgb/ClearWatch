@@ -45,6 +45,7 @@ function groqJson(obj) {
 // axios.get: routed through fake TMDb / DDD responses.
 const axios = require('axios');
 const MOVIES = {
+  111: { id: 111, title: 'Split Vote Mystery', release_date: '2026-06-30', overview: '', poster_path: null, runtime: 109, vote_average: 7, genres: [] },
   110: { id: 110, title: 'Out Last Week', release_date: new Date(Date.now() - 5 * 864e5).toISOString().slice(0, 10), overview: '', poster_path: null, runtime: 90, vote_average: 6, genres: [] },
   103: { id: 103, title: 'Unknown Movie', release_date: '2021-01-01', overview: '?', poster_path: null, runtime: 80, vote_average: 5, genres: [] },
   104: { id: 104, title: 'Api Movie', release_date: '2018-06-08', overview: '', poster_path: null, runtime: 127, vote_average: 7, genres: [] },
@@ -130,6 +131,17 @@ before(async () => {
   ]);
   // From the retired scraper (no topicId) → must be re-fetched from the API
   await saveCachedTriggers('107', [{ topic: 'Does a cat die?', yes: '0', no: '300' }]);
+  // Like Enola Holmes 3 on DDD: a 3–3 split on sexual content, nobody reports
+  // nudity, some blood but no excessive gore, a minority report of flashing lights.
+  await seed('111', [
+    { topic: 'there is sexual content', yes: '3', no: '3' },
+    { topic: 'there are nude scenes', yes: '0', no: '6' },
+    { topic: "there's blood/gore", yes: '5', no: '1' },
+    { topic: "there's excessive gore", yes: '0', no: '6' },
+    { topic: "there's flashing lights or images", yes: '2', no: '4' },
+    { topic: "there's screaming", yes: '0', no: '9' },
+    { topic: "there's domestic violence", yes: '0', no: '7' },
+  ]);
   // Confirmed but not strongly: 6 yes / 2 no (8 votes, under the 20-vote bar)
   await seed('108', [{ topic: 'Is there a dead animal', yes: '6', no: '2' }]);
   await cacheMovieSummary('101', MOVIES[101]);
@@ -177,10 +189,10 @@ test('profileToText handles empty, string and structured profiles', () => {
 });
 
 test('filterTriggersToUserProfile maps labels to DDD keywords', () => {
-  const all = [{ topic: 'Does a dog die' }, { topic: 'Is there gore' }, { topic: 'Spiders' }];
+  const all = [{ topic: 'Does a dog die' }, { topic: "there's excessive gore" }, { topic: 'Spiders' }];
   assert.deepEqual(filterTriggersToUserProfile(all, []), all);
   assert.deepEqual(filterTriggersToUserProfile(all, ['Animal cruelty or death']).map(t => t.topic), ['Does a dog die']);
-  assert.deepEqual(filterTriggersToUserProfile(all, ['graphic gore / dismemberment']).map(t => t.topic), ['Is there gore']);
+  assert.deepEqual(filterTriggersToUserProfile(all, ['graphic gore / dismemberment']).map(t => t.topic), ["there's excessive gore"]);
   // Unknown labels fall back to substring match on the label itself
   assert.deepEqual(filterTriggersToUserProfile(all, ['spiders']).map(t => t.topic), ['Spiders']);
 });
@@ -742,13 +754,13 @@ test('kids mode: GREEN requires the core kid-safety categories to be verified', 
   assert.equal(r.body.rating.rating, 'INSUFFICIENT_DATA');
   assert.equal(r.body.rating.reason, 'partial_data');
   assert.ok(r.body.rating.coverage.unverified.includes('sexual content & nudity'));
-  assert.ok(r.body.rating.coverage.clear.includes('graphic gore / dismemberment'));
+  assert.ok(r.body.rating.coverage.clear.includes('blood or gore'));
 });
 
 test('kids mode: strongly confirmed gore is RED', async () => {
   const r = await api('POST', '/api/movies/102/rate', { uid: 'k2', body: { userProfile: { kidsMode: true } } });
   assert.equal(r.body.rating.rating, 'RED');
-  assert.ok(r.body.rating.coverage.confirmed.includes('graphic gore / dismemberment'));
+  assert.ok(r.body.rating.coverage.confirmed.includes('blood or gore'));
 });
 
 test('loss & grief categories map onto DDD topic names', () => {
@@ -843,4 +855,44 @@ test('rate: a recent release with no data says so plainly', async () => {
   const r = await api('POST', '/api/movies/110/rate', { uid: 'new1', body: { userProfile: ANIMAL } });
   assert.equal(r.body.rating.rating, 'INSUFFICIENT_DATA');
   assert.match(r.body.rating.explanation, /came out recently/);
+});
+
+// ─── Mixed reports (split / thin votes) ────────────────────────────────────
+test('mixed: a 3–3 split is "mixed reports", not confirmed; no nudity votes → still not confirmed', async () => {
+  groqHandler = async () => groqJson({ rating: 'GREEN', explanation: 'ok', topTriggers: [], matchPct: 90 });
+  const r = await api('POST', '/api/movies/111/rate', { uid: 'mx1', body: { userProfile: {
+    triggers: ['Sexual content & nudity', 'Graphic gore / dismemberment'],
+    visualSensitivities: ['Flashing lights / strobe effects'],
+  } } });
+  const { coverage, rating, explanation } = r.body.rating;
+  assert.deepEqual(coverage.confirmed, []);
+  assert.deepEqual(coverage.mixed.sort(), ['Flashing lights / strobe effects', 'Sexual content & nudity']);
+  // "blood/gore" 5/1 is not *graphic* gore; "excessive gore" 0/6 clears it
+  assert.deepEqual(coverage.clear, ['Graphic gore / dismemberment']);
+  assert.equal(rating, 'YELLOW', 'mixed reports never allow GREEN');
+  assert.match(explanation, /^Mixed reports: .*Sexual content & nudity/);
+  assert.doesNotMatch(explanation, /Confirmed/);
+});
+
+test('mixed: a single unopposed vote is too thin to confirm', async () => {
+  await seed('112', [{ topic: 'a dog dies', yes: '1', no: '0' }]);
+  const { assessCoverage } = require('../index');
+  const cov = assessCoverage([{ topic: 'a dog dies', yes: '1', no: '0', topicId: 1 }], ['Animal cruelty or death']);
+  assert.deepEqual(cov.mixed, ['Animal cruelty or death']);
+  assert.deepEqual(cov.confirmed, []);
+});
+
+test('mixed: a small minority of yes votes (under 25%) counts as not reported', () => {
+  const { assessCoverage } = require('../index');
+  const cov = assessCoverage([{ topic: 'a dog dies', yes: '2', no: '30' }], ['Animal cruelty or death']);
+  assert.deepEqual(cov.clear, ['Animal cruelty or death']);
+});
+
+test('legacy labels map to current categories; placeholder answers are ignored', async () => {
+  const r = await api('POST', '/api/movies/111/rate', { uid: 'leg1', body: { userProfile: {
+    triggers: ['Domestic abuse'], audioSensitivities: ['Screaming (extended or intense)'], religiousCultural: ['No preference'],
+  } } });
+  const cov = r.body.rating.coverage;
+  assert.deepEqual(cov.clear.sort(), ['Domestic abuse', 'Screaming (extended or intense)']);
+  assert.ok(![...cov.confirmed, ...cov.mixed, ...cov.clear, ...cov.unverified].includes('No preference'));
 });

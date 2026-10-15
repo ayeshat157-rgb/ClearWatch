@@ -89,7 +89,7 @@ export interface AIRating {
   topTriggers: string[]; // specific DDD topics (specifics)
   matchPct: number | null; // 0-100; null when there isn't enough data to score
   coverage?: {
-    confirmed: string[]; clear: string[]; unverified: string[];
+    confirmed: string[]; mixed?: string[]; clear: string[]; unverified: string[];
     evidence?: Record<string, { topic: string; yes: number; no: number }[]>;
   };
 }
@@ -389,6 +389,11 @@ function coverageToTriggers(rating: AIRating) {
     ...cov.confirmed.map(label => ({
       id: `confirmed-${label}`, label, emoji: "⚠️", level: confirmedLevel, badge: "Confirmed",
       note: `Reported by the community: ${(cov.evidence?.[label] ?? []).map(describe).join(" · ")}`,
+    })),
+    // Split or thin votes: people report it, but it isn't a confirmed majority.
+    ...(cov.mixed ?? []).map(label => ({
+      id: `mixed-${label}`, label, emoji: "◐", level: "caution" as const, badge: "Mixed reports",
+      note: `Community reports are split or too few to confirm: ${(cov.evidence?.[label] ?? []).map(describe).join(" · ")}`,
     })),
     ...cov.clear.map(label => ({
       id: `clear-${label}`, label, emoji: "✓", level: "safe" as const, badge: "Not reported",

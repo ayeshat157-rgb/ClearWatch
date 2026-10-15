@@ -244,9 +244,21 @@ function triggerYesCount(t) { return parseInt((t.yes || '0').replace(/\D/g, ''),
 function triggerNoCount(t) { return parseInt((t.no || '0').replace(/\D/g, ''), 10) || 0; }
 
 // A moderator-verified answer outranks any vote count.
+// Confirmed: a real majority says yes, with enough votes to mean something.
+// (A 3–3 split used to count as "confirmed" — it isn't.)
+const MIN_VOTES_TO_CONFIRM = 3;
+const MIXED_MIN_YES_SHARE = 0.25;
 function isConfirmed(t) {
   if (t.verified) return t.verified === 'yes';
-  return triggerYesCount(t) > 0 && triggerYesCount(t) >= triggerNoCount(t);
+  const yes = triggerYesCount(t), no = triggerNoCount(t);
+  return yes > no && yes + no >= MIN_VOTES_TO_CONFIRM;
+}
+// Mixed: people report it, but not a confirmed majority — a split vote, or
+// too few votes to call. Never "clear", never "confirmed".
+function isMixed(t) {
+  if (t.verified || isConfirmed(t)) return false;
+  const yes = triggerYesCount(t), total = yes + triggerNoCount(t);
+  return yes > 0 && (total < MIN_VOTES_TO_CONFIRM || yes / total >= MIXED_MIN_YES_SHARE);
 }
 function hasEvidence(t, minVotes) {
   return !!t.verified || triggerYesCount(t) + triggerNoCount(t) >= minVotes;
@@ -265,7 +277,10 @@ const TRIGGER_KEYWORD_MAP = {
   // Violence & Physical Harm
   'domestic violence / abuse':           ['domestic violence', 'emotional or verbal abuse', 'abused with a belt', 'abuser', 'abusive'],
   'self-harm or suicide':                ['self harm', 'self-harm', 'suicid'],
-  'graphic gore / dismemberment':        ['gore', 'gory', 'dismember', 'amputation', 'body horror', 'graphic violence'],
+  // DDD separates "there's blood/gore" (any blood) from "there's excessive
+  // gore" — graphic means the latter. Kids Mode uses the broader 'blood or gore'.
+  'graphic gore / dismemberment':        ['excessive gore', 'gory', 'dismember', 'amputation', 'body horror', 'graphic violence'],
+  'blood or gore':                       ['gore', 'blood', 'gory'],
   // No 'bug'/'insect' here: DDD's "there are bugs" is a phobia topic, not animal harm.
   'animal cruelty or death':             ['animal', 'dog', 'cat', 'pet', 'horse', 'bird', 'fish', 'deer', 'rabbit'],
   // Sexual & Interpersonal Trauma
@@ -299,8 +314,17 @@ const TRIGGER_KEYWORD_MAP = {
   'high-pitched frequencies or screaming': ['scream', 'high-pitch', 'shriek'],
 };
 
+// Labels saved by older onboarding versions → current category.
+const LEGACY_LABELS = {
+  'domestic abuse': 'domestic violence / abuse',
+  'screaming (extended or intense)': 'high-pitched frequencies or screaming',
+};
+// Placeholder answers that aren't sensitivities at all.
+const NOT_A_SENSITIVITY = new Set(['no preference', 'none', '__none__', 'no visual sensitivities', 'no audio sensitivities', 'n/a']);
+
 function keywordsFor(label) {
-  return TRIGGER_KEYWORD_MAP[label.toLowerCase()] || [label.toLowerCase()];
+  const key = label.toLowerCase();
+  return TRIGGER_KEYWORD_MAP[key] || TRIGGER_KEYWORD_MAP[LEGACY_LABELS[key]] || [key];
 }
 
 // Keyword must start a word: "cat" matches "cats" but not "dedicated",
@@ -339,11 +363,11 @@ const MIN_VOTES_FOR_COVERAGE = 3;
 
 // Bump whenever rating logic changes, so cached ratings from older logic
 // (e.g. GREEN-on-no-data) are regenerated instead of served.
-const RATING_LOGIC_VERSION = 7; // 7: keyword map follows DDD topic names
+const RATING_LOGIC_VERSION = 8; // 8: mixed-reports state, majority to confirm, graphic gore
 
 // Kids Mode means these must be *verified* absent before a title can be GREEN.
 const KIDS_MODE_LABELS = [
-  'graphic gore / dismemberment',
+  'blood or gore',
   'sexual content & nudity',
   'sexual assault references',
   'self-harm or suicide',
@@ -364,7 +388,12 @@ function sensitivityLabels(userProfile) {
     ...(userProfile.kidsMode ? KIDS_MODE_LABELS : []),
   ];
   const seen = new Set();
-  return labels.filter(l => !seen.has(l.toLowerCase()) && seen.add(l.toLowerCase()));
+  return labels.filter(l => {
+    const key = l.toLowerCase();
+    if (NOT_A_SENSITIVITY.has(key) || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /**
@@ -372,7 +401,7 @@ function sensitivityLabels(userProfile) {
  * confirming), or unverified (no/too few votes on any matching topic).
  */
 function assessCoverage(allTriggers, labels) {
-  const confirmed = [], clear = [], unverified = [];
+  const confirmed = [], mixed = [], clear = [], unverified = [];
   const evidence = {}; // label → the topics behind the verdict (specifics; may be spoilery)
   const summarize = t => ({ topic: t.topic, yes: triggerYesCount(t), no: triggerNoCount(t) });
   const byVotes = (a, b) => (triggerYesCount(b) + triggerNoCount(b)) - (triggerYesCount(a) + triggerNoCount(a));
@@ -383,6 +412,9 @@ function assessCoverage(allTriggers, labels) {
     if (hits.length) {
       confirmed.push(label);
       evidence[label] = hits.sort((a, b) => triggerYesCount(b) - triggerYesCount(a)).slice(0, 3).map(summarize);
+    } else if (matches.some(isMixed)) {
+      mixed.push(label);
+      evidence[label] = matches.filter(isMixed).sort((a, b) => triggerYesCount(b) - triggerYesCount(a)).slice(0, 3).map(summarize);
     } else if (matches.some(t => hasEvidence(t, MIN_VOTES_FOR_COVERAGE))) {
       clear.push(label);
       evidence[label] = matches.filter(t => hasEvidence(t, MIN_VOTES_FOR_COVERAGE)).sort(byVotes).slice(0, 2).map(summarize);
@@ -390,7 +422,7 @@ function assessCoverage(allTriggers, labels) {
       unverified.push(label);
     }
   }
-  return { confirmed, clear, unverified, evidence };
+  return { confirmed, mixed, clear, unverified, evidence };
 }
 
 // ─── Spoiler-safe summary ────────────────────────────────────────────────
@@ -406,11 +438,12 @@ function spoilerSafeSummary(rating, coverage, languageStyle) {
     parts.push(soft
       ? `A gentle heads-up: this includes something you asked us to watch for — ${list(coverage.confirmed)}.`
       : `Confirmed for you: ${list(coverage.confirmed)}.`);
-  } else if (rating === 'RED' || rating === 'YELLOW') {
+  } else if ((rating === 'RED' || rating === 'YELLOW') && !coverage.mixed?.length) {
     parts.push(soft
       ? 'There may be content here that could be hard for you.'
       : 'Some content may be a concern for your profile.');
   }
+  if (coverage.mixed?.length) parts.push(`Mixed reports: ${list(coverage.mixed)}.`);
   if (coverage.clear.length) parts.push(`Checked and not reported: ${list(coverage.clear)}.`);
   if (coverage.unverified.length) parts.push(`Not enough data to rule out: ${list(coverage.unverified)}.`);
   return parts.join(' ') || 'No concerns were reported for your profile.';
@@ -458,13 +491,15 @@ function applySeverityFloor(rating, triggers, labels, coverage) {
       floorApplied: 'strong_confirmation',
     };
   }
-  // Weaker confirmation of a flagged category: may be YELLOW, never GREEN.
-  if (coverage.confirmed.length > 0 && rating.rating === 'GREEN') {
+  // Weaker confirmation or mixed reports of a flagged category: may be
+  // YELLOW, never GREEN.
+  const reported = [...coverage.confirmed, ...(coverage.mixed || [])];
+  if (reported.length > 0 && rating.rating === 'GREEN') {
     return {
       ...rating,
       rating: 'YELLOW',
       matchPct: Math.min(Math.max(typeof rating.matchPct === 'number' ? rating.matchPct : 50, 30), 70),
-      explanation: `Some people report content you flagged (${coverage.confirmed.join(', ')}), though it isn't strongly confirmed. ${rating.explanation || ''}`.trim(),
+      explanation: `Some people report content you flagged (${reported.join(', ')}), though it isn't strongly confirmed. ${rating.explanation || ''}`.trim(),
       floorApplied: 'weak_confirmation',
     };
   }
@@ -545,7 +580,7 @@ async function generateRating(movie, triggers, profileText, selectedTriggers, fe
   const relevantTriggers = filterTriggersToUserProfile(triggers, selectedTriggers);
 
   const triggersText = relevantTriggers
-    .filter(isConfirmed) // drop stray single votes contradicted by consensus
+    .filter(t => isConfirmed(t) || isMixed(t)) // drop stray single votes contradicted by consensus
     // strongest-confirmed first: moderator-verified, then by yes votes
     .sort((a, b) => (b.verified === 'yes') - (a.verified === 'yes') || triggerYesCount(b) - triggerYesCount(a))
     .slice(0, 20) // cap so the prompt stays focused
@@ -937,7 +972,7 @@ app.get('/api/recommendations', verifyAuth, async (req, res) => {
 // Same consensus rule generateRating() uses: a stray "yes" outvoted by "no"
 // votes doesn't count as the trigger being present.
 function triggerFlagged(t) {
-  return isConfirmed(t);
+  return isConfirmed(t) || isMixed(t);
 }
 
 const COLLECTION_RULES = {
