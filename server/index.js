@@ -339,7 +339,7 @@ const MIN_VOTES_FOR_COVERAGE = 3;
 
 // Bump whenever rating logic changes, so cached ratings from older logic
 // (e.g. GREEN-on-no-data) are regenerated instead of served.
-const RATING_LOGIC_VERSION = 6; // 6: spoiler-safe summary + details, Kids Mode/religious coverage
+const RATING_LOGIC_VERSION = 7; // 7: keyword map follows DDD topic names
 
 // Kids Mode means these must be *verified* absent before a title can be GREEN.
 const KIDS_MODE_LABELS = [
