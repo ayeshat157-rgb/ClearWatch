@@ -210,7 +210,7 @@ const TRIGGER_CATS = [
   },
   {
     id: "addiction", label: "Addiction & Substance Use", emoji: "💊",
-    items: ["Active drug use / needle depiction", "Alcoholism / heavy drinking", "Eating disorders / body dysmorphia behaviors"]
+    items: ["Active drug use / needle depiction", "Alcohol abuse / heavy drinking", "Eating disorders / body dysmorphia behaviors"]
   },
   {
     id: "phobias", label: "Common Phobias & Panic Triggers", emoji: "😰",

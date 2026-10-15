@@ -169,7 +169,7 @@ Then edit `topicMap.json` (move/add/remove IDs) and set `"reviewed": true` for t
 
 > Decided: needles (190) stay related — the topic also covers medical injections.
 
-## ☐ alcoholism / heavy drinking
+## ☐ alcohol abuse / heavy drinking
 
 **Core** (1)
 - `225` alcohol abuse
@@ -177,7 +177,7 @@ Then edit `topicMap.json` (move/add/remove IDs) and set `"reviewed": true` for t
 **Related** (1)
 - `230` there's addiction
 
-> DDD has no topic for ordinary/social drinking — only 'alcohol abuse'. A film with casual drinking can come out 'not reported'.
+> Renamed from 'Alcoholism / heavy drinking' (old profiles map here). DDD only tracks alcohol abuse — casual/social drinking has no data source: TMDb keywords were checked and are far too sparse ('alcohol' is on 397 films; not on The Hangover, Titanic or Forrest Gump).
 
 ## ☐ eating disorders / body dysmorphia behaviors
 

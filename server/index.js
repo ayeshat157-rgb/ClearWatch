@@ -309,7 +309,7 @@ const TRIGGER_KEYWORD_MAP = {
   'emotional abuse or gaslighting':      ['gaslight', 'emotional or verbal abuse', 'manipulat'],
   // Addiction & Substance Use
   'active drug use / needle depiction':  ['uses drugs', 'drug use', 'drugged', 'needles', 'addiction', 'overdose', 'heroin', 'cocaine'],
-  'alcoholism / heavy drinking':         ['alcohol', 'drunk', 'drinking'],
+  'alcohol abuse / heavy drinking':      ['alcohol', 'drunk', 'drinking'],
   'eating disorders / body dysmorphia behaviors': ['eating disorder', 'body dysmorphia', 'anorex', 'bulimi'],
   // Common Phobias
   'bugs / insects (spiders, snakes, etc.)': ['spider', 'snake', 'insect', 'bug', 'worm', 'rodent', 'rats', 'mice'],
@@ -334,6 +334,7 @@ const LEGACY_LABELS = {
   'domestic abuse': 'domestic violence / abuse',
   'screaming (extended or intense)': 'high-pitched frequencies or screaming',
   'shaky camera / intense color contrast': 'shaky camera',
+  'alcoholism / heavy drinking': 'alcohol abuse / heavy drinking',
 };
 // Placeholder answers that aren't sensitivities at all.
 const NOT_A_SENSITIVITY = new Set(['no preference', 'none', '__none__', 'no visual sensitivities', 'no audio sensitivities', 'n/a']);
@@ -404,7 +405,7 @@ const MIN_VOTES_FOR_COVERAGE = 3;
 
 // Bump whenever rating logic changes, so cached ratings from older logic
 // (e.g. GREEN-on-no-data) are regenerated instead of served.
-const RATING_LOGIC_VERSION = 10; // 10: topic map review decisions
+const RATING_LOGIC_VERSION = 11; // 11: alcohol category renamed to what DDD tracks
 
 // Kids Mode means these must be *verified* absent before a title can be GREEN.
 const KIDS_MODE_LABELS = [
@@ -1204,7 +1205,7 @@ const CHAT_TOOLS = [
           title: { type: 'string', description: 'The movie or show title' },
           categories: {
             type: 'array',
-            description: "Optional: content categories the user asked about, including ones outside their profile (e.g. they ask 'does it have alcohol?' → ['alcoholism / heavy drinking']). Each comes back as confirmed / mixed reports / not reported / not enough data.",
+            description: "Optional: content categories the user asked about, including ones outside their profile (e.g. they ask 'does it have alcohol?' → ['alcohol abuse / heavy drinking']). Each comes back as confirmed / mixed reports / not reported / not enough data.",
             items: { type: 'string', enum: CHAT_CATEGORIES },
           },
         },
@@ -1262,7 +1263,7 @@ ${spoilerRule}
 
 ${noSceneData}
 
-The user can ask about ANY content category, not only the ones in their profile (e.g. "does it have alcohol?", "any jump scares?", "is there blood?"). Pass those as \`categories\` to check_movie_safety and report each one's status in plain words: confirmed, mixed reports (some people report it, not confirmed), not reported, or not enough data. Each result says inUsersProfile: when false, present it as general information — never say it relates to or matches their profile, and it doesn't change their personal rating. Never answer them from your own knowledge.
+The user can ask about ANY content category, not only the ones in their profile (e.g. "does it have alcohol?", "any jump scares?", "is there blood?"). Pass those as \`categories\` to check_movie_safety and report each one's status in plain words: confirmed, mixed reports (some people report it, not confirmed), not reported, or not enough data. Alcohol: the data only tracks alcohol abuse / heavy drinking — if asked about any drinking, say casual drinking isn't tracked, so "not reported" doesn't rule it out. Each result says inUsersProfile: when false, present it as general information — never say it relates to or matches their profile, and it doesn't change their personal rating. Never answer them from your own knowledge.
 
 Keep answers to 2-4 sentences and warm.`;
 

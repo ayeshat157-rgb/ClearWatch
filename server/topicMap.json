@@ -168,7 +168,7 @@
       },
       "notes": "Decided: needles (190) stay related — the topic also covers medical injections."
     },
-    "alcoholism / heavy drinking": {
+    "alcohol abuse / heavy drinking": {
       "reviewed": false,
       "core": {
         "225": "alcohol abuse"
@@ -176,7 +176,7 @@
       "related": {
         "230": "there's addiction"
       },
-      "notes": "DDD has no topic for ordinary/social drinking — only 'alcohol abuse'. A film with casual drinking can come out 'not reported'."
+      "notes": "Renamed from 'Alcoholism / heavy drinking' (old profiles map here). DDD only tracks alcohol abuse — casual/social drinking has no data source: TMDb keywords were checked and are far too sparse ('alcohol' is on 397 films; not on The Hangover, Titanic or Forrest Gump)."
     },
     "eating disorders / body dysmorphia behaviors": {
       "reviewed": false,

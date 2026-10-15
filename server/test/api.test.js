@@ -1005,9 +1005,9 @@ test('chat: can report categories outside the user\'s profile', async () => {
     if (!toolMsg) {
       // The category list offered to the model is the real one
       const params = args.tools.find(t => t.function.name === 'check_movie_safety').function.parameters;
-      assert.ok(params.properties.categories.items.enum.includes('alcoholism / heavy drinking'));
+      assert.ok(params.properties.categories.items.enum.includes('alcohol abuse / heavy drinking'));
       return { choices: [{ message: { role: 'assistant', content: null, tool_calls: [{ id: 't1', type: 'function', function: {
-        name: 'check_movie_safety', arguments: JSON.stringify({ title: 'Dog Movie', categories: ['alcoholism / heavy drinking', 'blood or gore', 'not a real category'] }),
+        name: 'check_movie_safety', arguments: JSON.stringify({ title: 'Dog Movie', categories: ['alcohol abuse / heavy drinking', 'blood or gore', 'not a real category'] }),
       } }] } }] };
     }
     toolResult = JSON.parse(toolMsg.content);
@@ -1018,7 +1018,7 @@ test('chat: can report categories outside the user\'s profile', async () => {
   assert.equal(r.status, 200);
   assert.deepEqual(toolResult.askedCategories, {
     'blood or gore': { status: 'confirmed', inUsersProfile: false },               // "Is there gore" 40 yes / 2 no
-    'alcoholism / heavy drinking': { status: 'not reported', inUsersProfile: false }, // 1 yes / 30 no
+    'alcohol abuse / heavy drinking': { status: 'not reported', inUsersProfile: false }, // 1 yes / 30 no
   });
   assert.match(groqCalls[0].messages[0].content, /ANY content category/);
 });
@@ -1028,4 +1028,10 @@ test('duplicate DDD entries: use the one people actually voted on', async () => 
   const r = await api('POST', '/api/movies/114/rate', { uid: 'dup1', body: { userProfile: ANIMAL } });
   assert.equal(r.status, 200);
   assert.ok(r.body.triggers.some(t => t.topic === 'a dog dies'), 'used the entry with votes');
+});
+
+test('alcohol category says what the data covers; the old name still works', () => {
+  const { topicRole } = require('../index');
+  assert.equal(topicRole({ topicId: 225, topic: 'alcohol abuse' }, 'Alcohol abuse / heavy drinking'), 'core');
+  assert.equal(topicRole({ topicId: 225, topic: 'alcohol abuse' }, 'Alcoholism / heavy drinking'), 'core');
 });
